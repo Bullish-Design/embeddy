@@ -485,6 +485,7 @@ class TestEmbedderSearch:
         # Both metrics should pick the same best-matching corpus entry.
         assert dot_results.results[0][0].corpus_id == cosine_results.results[0][0].corpus_id
 
+
     def test_search_with_precomputed_corpus_embeddings_matches_corpus_search(
         self,
         embedder: Embedder,
@@ -553,4 +554,3 @@ class TestEmbedderSearch:
         """Omitting both ``corpus`` and ``corpus_embeddings`` must fail fast."""
         with pytest.raises(ValidationError):
             embedder.search(queries=["alpha"])
-
