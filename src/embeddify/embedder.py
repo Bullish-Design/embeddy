@@ -9,8 +9,8 @@ import numpy as np
 from pydantic import BaseModel, Field, PrivateAttr
 
 from embeddify.config import EmbedderConfig, RuntimeConfig, load_config_file
-from embeddify.exceptions import EncodingError, ModelLoadError, ValidationError
-from embeddify.models import Embedding, EmbeddingResult, SimilarityScore
+from embeddify.exceptions import EncodingError, ModelLoadError, SearchError, ValidationError
+from embeddify.models import Embedding, EmbeddingResult, SearchResult, SearchResults, SimilarityScore
 logger = logging.getLogger(__name__)
 
 
@@ -289,6 +289,94 @@ class Embedder(BaseModel):
 
         return [self.similarity(e1, e2, metric=metric) for e1, e2 in zip(embs1, embs2)]
 
+
+    def search(
+        self,
+        queries: list[str],
+        corpus: list[str],
+        top_k: int = 5,
+        score_function: str = "cosine",
+    ) -> SearchResults:
+        """Perform semantic search over a corpus of texts.
+
+        This initial implementation encodes both the queries and the corpus on
+        the fly using :meth:`encode` and then computes pairwise similarities
+        between each query and every corpus entry. The top ``top_k`` highest
+        scoring results for each query are returned in a :class:`SearchResults`
+        container.
+
+        Args:
+            queries: Text queries to search for.
+            corpus: Corpus of documents to search within.
+            top_k: Number of top results to return per query. Must be at least
+                ``1`` and no greater than the corpus size when the corpus is
+                non-empty.
+            score_function: Similarity metric to use, either ``"cosine"`` or
+                ``"dot"``.
+
+        Returns:
+            A :class:`SearchResults` instance containing, for each query, a list
+            of :class:`SearchResult` objects describing the best matching corpus
+            entries.
+
+        Raises:
+            ValidationError: If ``top_k`` is out of range or an unsupported
+                ``score_function`` is requested.
+            SearchError: If encoding or similarity computation fails.
+        """
+        # Handle trivial cases early to avoid unnecessary work.
+        if not queries:
+            return SearchResults(results=[], query_texts=[])
+
+        if not corpus:
+            # No documents to search; each query simply has no hits.
+            empty_results: list[list[SearchResult]] = [[] for _ in queries]
+            return SearchResults(results=empty_results, query_texts=queries)
+
+        metric_normalised = score_function.lower()
+        if metric_normalised not in {"cosine", "dot"}:
+            raise ValidationError(
+                f"Unsupported similarity metric {score_function!r}. "
+                "Supported metrics are 'cosine' and 'dot'."
+            )
+
+        if top_k < 1:
+            raise ValidationError(f"top_k must be at least 1; got {top_k}.")
+        if len(corpus) and top_k > len(corpus):
+            raise ValidationError(
+                f"top_k ({top_k}) cannot be greater than corpus size ({len(corpus)})."
+            )
+
+        try:
+            query_result = self.encode(queries)
+            corpus_result = self.encode(corpus)
+
+            all_results: list[list[SearchResult]] = []
+
+            for query_embedding in query_result.embeddings:
+                # Compute similarity between this query and every corpus entry.
+                similarities = [
+                    self.similarity(query_embedding, corpus_embedding, metric=metric_normalised)
+                    for corpus_embedding in corpus_result.embeddings
+                ]
+
+                indexed_scores = list(enumerate(similarities))
+                indexed_scores.sort(key=lambda item: item[1].score, reverse=True)
+                top_hits = indexed_scores[:top_k]
+
+                query_hits = [
+                    SearchResult(
+                        corpus_id=corpus_index,
+                        score=score.score,
+                        text=corpus[corpus_index],
+                    )
+                    for corpus_index, score in top_hits
+                ]
+                all_results.append(query_hits)
+
+            return SearchResults(results=all_results, query_texts=queries)
+        except Exception as exc:  # pragma: no cover - defensive; exercised via tests
+            raise SearchError(f"Semantic search failed: {exc}") from exc
     @property
     def model_name(self) -> str:
         """Return a human-readable identifier for the loaded model.

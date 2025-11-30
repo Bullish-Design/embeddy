@@ -10,7 +10,7 @@ import pytest
 from embeddify.config import EmbedderConfig, RuntimeConfig
 from embeddify.embedder import Embedder
 from embeddify.exceptions import EncodingError, ModelLoadError, ValidationError
-from embeddify.models import Embedding, EmbeddingResult, SimilarityScore
+from embeddify.models import Embedding, EmbeddingResult, SearchResults, SimilarityScore
 
 
 class TestEmbedderInitialisation:
@@ -319,3 +319,168 @@ class TestSimilarity:
 
         assert score.metric == "cosine"
         assert score.score == pytest.approx(1.0)
+
+
+
+class TestEmbedderSearch:
+    """Tests for the semantic search functionality built on top of embeddings."""
+
+    def _patch_deterministic_encode(self, embedder: Embedder, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Replace ``encode`` with a deterministic implementation for tests.
+
+        The patched method derives a small numeric vector from each input text
+        using a hash-based random generator so that the same text always yields
+        the same embedding across calls.
+        """
+
+        def fake_encode(self, texts: str | list[str]) -> EmbeddingResult:
+            if isinstance(texts, str):
+                raw_texts = [texts]
+            else:
+                raw_texts = list(texts)
+
+            embeddings: list[Embedding] = []
+            for text in raw_texts:
+                # Derive a stable seed from the text so encodings are
+                # repeatable but independent of the underlying model.
+                seed = abs(hash(text)) % (2**32)
+                rng = np.random.default_rng(seed)
+                vector = rng.normal(size=4)
+
+                embeddings.append(
+                    Embedding(
+                        vector=vector,
+                        model_name="deterministic-test-model",
+                        normalized=False,
+                        text=text,
+                    )
+                )
+
+            return EmbeddingResult(
+                embeddings=embeddings,
+                model_name="deterministic-test-model",
+                dimensions=4,
+            )
+
+        monkeypatch.setattr(Embedder, "encode", fake_encode)
+
+    def test_basic_search_returns_results_for_each_query(
+        self,
+        embedder: Embedder,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Search should return top hits per query with associated corpus text."""
+        self._patch_deterministic_encode(embedder, monkeypatch)
+
+        queries = ["alpha", "beta"]
+        corpus = ["alpha", "gamma", "beta"]
+
+        results = embedder.search(queries=queries, corpus=corpus, top_k=2)
+
+        assert isinstance(results, SearchResults)
+        # One list of hits per query.
+        assert len(results.results) == len(queries)
+        assert results.query_texts == queries
+        # The best hit for each query should be the matching corpus entry.
+        first_hits = [hits[0].text for hits in results.results]
+        assert first_hits[0] == "alpha"
+        assert first_hits[1] == "beta"
+
+    def test_top_k_limits_number_of_results(
+        self,
+        embedder: Embedder,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The ``top_k`` parameter should control the number of hits per query."""
+        self._patch_deterministic_encode(embedder, monkeypatch)
+
+        queries = ["alpha"]
+        corpus = ["alpha", "beta", "gamma", "delta"]
+
+        results = embedder.search(queries=queries, corpus=corpus, top_k=2)
+
+        assert len(results.results) == 1
+        assert len(results.results[0]) == 2
+
+    def test_results_are_sorted_by_score_descending(
+        self,
+        embedder: Embedder,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Results for a query must be ordered from most to least similar."""
+        self._patch_deterministic_encode(embedder, monkeypatch)
+
+        queries = ["alpha"]
+        corpus = ["alpha", "beta", "gamma"]
+
+        results = embedder.search(queries=queries, corpus=corpus, top_k=3)
+
+        scores = [hit.score for hit in results.results[0]]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_empty_queries_return_empty_results(self, embedder: Embedder) -> None:
+        """An empty query list should yield an empty SearchResults container."""
+        results = embedder.search(queries=[], corpus=["alpha", "beta"])
+
+        assert isinstance(results, SearchResults)
+        assert results.results == []
+        assert results.query_texts == []
+
+    def test_empty_corpus_returns_no_hits(
+        self,
+        embedder: Embedder,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An empty corpus should produce no hits for each query."""
+        self._patch_deterministic_encode(embedder, monkeypatch)
+
+        queries = ["alpha", "beta"]
+        results = embedder.search(queries=queries, corpus=[])
+
+        assert len(results.results) == len(queries)
+        assert all(hits == [] for hits in results.results)
+
+    def test_invalid_top_k_raises_validation_error(
+        self,
+        embedder: Embedder,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Invalid ``top_k`` values must raise :class:`ValidationError`."""
+        self._patch_deterministic_encode(embedder, monkeypatch)
+
+        corpus = ["alpha", "beta", "gamma"]
+
+        with pytest.raises(ValidationError):
+            embedder.search(queries=["alpha"], corpus=corpus, top_k=0)
+
+        with pytest.raises(ValidationError):
+            embedder.search(queries=["alpha"], corpus=corpus, top_k=4)
+
+    def test_invalid_score_function_raises_validation_error(self, embedder: Embedder) -> None:
+        """Unsupported score functions must be rejected early."""
+        with pytest.raises(ValidationError):
+            embedder.search(queries=["alpha"], corpus=["alpha"], score_function="euclidean")
+
+    def test_dot_product_score_function(self, embedder: Embedder, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The ``dot`` score function should be accepted and behave like cosine."""
+        self._patch_deterministic_encode(embedder, monkeypatch)
+
+        queries = ["alpha"]
+        corpus = ["alpha", "beta"]
+
+        cosine_results = embedder.search(
+            queries=queries,
+            corpus=corpus,
+            top_k=2,
+            score_function="cosine",
+        )
+        dot_results = embedder.search(
+            queries=queries,
+            corpus=corpus,
+            top_k=2,
+            score_function="dot",
+        )
+
+        assert len(dot_results.results[0]) == len(cosine_results.results[0])
+        # Both metrics should pick the same best-matching corpus entry.
+        assert dot_results.results[0][0].corpus_id == cosine_results.results[0][0].corpus_id
