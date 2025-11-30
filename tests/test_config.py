@@ -3,11 +3,12 @@ from __future__ import annotations
 import os
 import sys
 import types
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
-from embeddify.config import EmbedderConfig, RuntimeConfig
+from embeddify.config import EmbedderConfig, RuntimeConfig, load_config_file
 from embeddify.exceptions import ValidationError as EmbeddifyValidationError
 
 
@@ -168,3 +169,63 @@ class TestRuntimeConfigFromEnv:
 
         with pytest.raises(EmbeddifyValidationError):
             RuntimeConfig.from_env()
+
+
+
+class TestConfigFileLoading:
+    """Tests for loading configuration from YAML/JSON files."""
+
+    def _fixture_path(self, filename: str) -> Path:
+        return Path(__file__).parent / "fixtures" / "configs" / filename
+
+    def test_load_yaml_config(self) -> None:
+        model_cfg, runtime_cfg = load_config_file(str(self._fixture_path("valid.yaml")))
+
+        assert model_cfg.model_path == "/models/all-MiniLM-L6-v2"
+        assert model_cfg.device == "cpu"
+        assert model_cfg.normalize_embeddings is True
+        assert model_cfg.trust_remote_code is False
+
+        assert runtime_cfg.batch_size == 16
+        assert runtime_cfg.show_progress_bar is True
+        assert runtime_cfg.enable_cache is True
+        assert runtime_cfg.convert_to_numpy is False
+
+    def test_load_json_config(self) -> None:
+        model_cfg, runtime_cfg = load_config_file(str(self._fixture_path("valid.json")))
+
+        assert model_cfg.model_path == "/models/all-MiniLM-L6-v2"
+        assert runtime_cfg.batch_size == 16
+
+    def test_env_overrides_file_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        path = self._fixture_path("valid.yaml")
+        monkeypatch.setenv("EMBEDDIFY_MODEL_PATH", "/override/model")
+        monkeypatch.setenv("EMBEDDIFY_BATCH_SIZE", "64")
+
+        model_cfg, runtime_cfg = load_config_file(str(path))
+
+        assert model_cfg.model_path == "/override/model"
+        assert runtime_cfg.batch_size == 64
+
+    def test_uses_env_config_path_when_no_path_provided(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = self._fixture_path("valid.yaml")
+        monkeypatch.setenv("EMBEDDIFY_CONFIG_PATH", str(path))
+
+        model_cfg, runtime_cfg = load_config_file()
+
+        assert model_cfg.model_path == "/models/all-MiniLM-L6-v2"
+        assert runtime_cfg.batch_size == 16
+
+    def test_missing_config_file_raises_file_not_found(self) -> None:
+        missing = self._fixture_path("does-not-exist.yaml")
+
+        with pytest.raises(FileNotFoundError):
+            load_config_file(str(missing))
+
+    def test_malformed_config_raises_validation_error(self) -> None:
+        malformed = self._fixture_path("invalid.yaml")
+
+        with pytest.raises(EmbeddifyValidationError):
+            load_config_file(str(malformed))

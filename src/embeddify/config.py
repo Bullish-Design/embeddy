@@ -4,8 +4,11 @@ from __future__ import annotations
 import os
 import re
 import logging
+import json
+from pathlib import Path
 from typing import Any
 
+import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from embeddify.exceptions import ValidationError as EmbeddifyValidationError
@@ -244,3 +247,132 @@ class RuntimeConfig(BaseModel):
             raise EmbeddifyValidationError(
                 f"Invalid Runtime configuration from environment: {exc}"
             ) from exc
+
+
+
+def load_config_file(path: str | None = None) -> tuple[EmbedderConfig, RuntimeConfig]:
+    """Load configuration from a YAML or JSON file.
+
+    The configuration file is expected to use a nested structure with ``model``
+    and ``runtime`` sections. Environment variables can override values loaded
+    from the file.
+
+    Args:
+        path: Optional path to the configuration file. When ``None``, the
+            function falls back to the ``EMBEDDIFY_CONFIG_PATH`` environment
+            variable.
+
+    Returns:
+        A tuple of (:class:`EmbedderConfig`, :class:`RuntimeConfig`).
+
+    Raises:
+        FileNotFoundError: If the configuration file does not exist.
+        EmbeddifyValidationError: If the configuration cannot be parsed or
+            has an unexpected structure.
+    """
+    config_path_str = path or os.getenv("EMBEDDIFY_CONFIG_PATH")
+    if not config_path_str:
+        raise EmbeddifyValidationError(
+            "No configuration path provided and EMBEDDIFY_CONFIG_PATH is not set."
+        )
+
+    config_path = Path(config_path_str)
+    if not config_path.is_file():
+        raise FileNotFoundError(str(config_path))
+
+    try:
+        if config_path.suffix.lower() in {".yaml", ".yml"}:
+            loaded = yaml.safe_load(config_path.read_text())
+        elif config_path.suffix.lower() == ".json":
+            loaded = json.loads(config_path.read_text())
+        else:
+            # Prefer YAML parsing for unknown extensions; this mirrors typical
+            # config-file behaviour but still validates structure below.
+            loaded = yaml.safe_load(config_path.read_text())
+    except Exception as exc:  # pragma: no cover - parser specific failures
+        raise EmbeddifyValidationError(
+            f"Failed to parse configuration file {config_path}: {exc}"
+        ) from exc
+
+    if not isinstance(loaded, dict):
+        raise EmbeddifyValidationError(
+            "Configuration file must contain a mapping at the top level."
+        )
+
+    model_section = loaded.get("model", {})
+    runtime_section = loaded.get("runtime", {})
+
+    if not isinstance(model_section, dict) or not isinstance(runtime_section, dict):
+        raise EmbeddifyValidationError(
+            "Configuration sections 'model' and 'runtime' must be mappings."
+        )
+
+    # Map file keys to EmbedderConfig fields.
+    model_kwargs: dict[str, Any] = {}
+    if "path" in model_section:
+        model_kwargs["model_path"] = model_section["path"]
+    if "model_path" in model_section:
+        model_kwargs["model_path"] = model_section["model_path"]
+    if "device" in model_section:
+        model_kwargs["device"] = model_section["device"]
+    if "normalize_embeddings" in model_section:
+        model_kwargs["normalize_embeddings"] = model_section["normalize_embeddings"]
+    if "trust_remote_code" in model_section:
+        model_kwargs["trust_remote_code"] = model_section["trust_remote_code"]
+
+    # Map file keys to RuntimeConfig fields.
+    runtime_kwargs: dict[str, Any] = {}
+    for key in ("batch_size", "show_progress_bar", "enable_cache", "convert_to_numpy"):
+        if key in runtime_section:
+            runtime_kwargs[key] = runtime_section[key]
+
+    # Apply environment overrides for model configuration.
+    env_model_path = os.getenv("EMBEDDIFY_MODEL_PATH")
+    if env_model_path is not None:
+        model_kwargs["model_path"] = env_model_path
+
+    env_device = os.getenv("EMBEDDIFY_DEVICE")
+    if env_device is not None:
+        model_kwargs["device"] = env_device
+
+    env_normalize = os.getenv("EMBEDDIFY_NORMALIZE_EMBEDDINGS")
+    if env_normalize is not None:
+        model_kwargs["normalize_embeddings"] = EmbedderConfig._parse_bool_env(
+            env_normalize, "EMBEDDIFY_NORMALIZE_EMBEDDINGS"
+        )
+
+    env_trust = os.getenv("EMBEDDIFY_TRUST_REMOTE_CODE")
+    if env_trust is not None:
+        model_kwargs["trust_remote_code"] = EmbedderConfig._parse_bool_env(
+            env_trust, "EMBEDDIFY_TRUST_REMOTE_CODE"
+        )
+
+    # Apply environment overrides for runtime configuration.
+    env_batch = os.getenv("EMBEDDIFY_BATCH_SIZE")
+    if env_batch is not None:
+        try:
+            runtime_kwargs["batch_size"] = int(env_batch)
+        except ValueError as exc:  # pragma: no cover - edge parsing path
+            raise EmbeddifyValidationError(
+                f"Invalid integer value {env_batch!r} for EMBEDDIFY_BATCH_SIZE."
+            ) from exc
+
+    def _apply_bool_env(key: str, env_name: str) -> None:
+        raw = os.getenv(env_name)
+        if raw is None:
+            return
+        runtime_kwargs[key] = EmbedderConfig._parse_bool_env(raw, env_name)
+
+    _apply_bool_env("show_progress_bar", "EMBEDDIFY_SHOW_PROGRESS_BAR")
+    _apply_bool_env("enable_cache", "EMBEDDIFY_ENABLE_CACHE")
+    _apply_bool_env("convert_to_numpy", "EMBEDDIFY_CONVERT_TO_NUMPY")
+
+    try:
+        model_config = EmbedderConfig(**model_kwargs)
+        runtime_config = RuntimeConfig(**runtime_kwargs)
+    except Exception as exc:
+        raise EmbeddifyValidationError(
+            f"Invalid configuration values in {config_path}: {exc}"
+        ) from exc
+
+    return model_config, runtime_config

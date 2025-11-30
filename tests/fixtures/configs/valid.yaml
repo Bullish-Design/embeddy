@@ -1,0 +1,10 @@
+model:
+  path: "/models/all-MiniLM-L6-v2"
+  device: "cpu"
+  normalize_embeddings: true
+  trust_remote_code: false
+runtime:
+  batch_size: 16
+  show_progress_bar: true
+  enable_cache: true
+  convert_to_numpy: false
