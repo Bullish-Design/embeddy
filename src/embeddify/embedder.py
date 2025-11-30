@@ -11,7 +11,6 @@ from pydantic import BaseModel, Field, PrivateAttr
 from embeddify.config import EmbedderConfig, RuntimeConfig, load_config_file
 from embeddify.exceptions import EncodingError, ModelLoadError, SearchError, ValidationError
 from embeddify.models import Embedding, EmbeddingResult, SearchResult, SearchResults, SimilarityScore
-
 logger = logging.getLogger(__name__)
 
 
@@ -27,7 +26,9 @@ class Embedder(BaseModel):
     validated eagerly and so that consumers benefit from rich type hints.
     """
 
-    config: EmbedderConfig = Field(description="Validated configuration used to load the underlying model.")
+    config: EmbedderConfig = Field(
+        description="Validated configuration used to load the underlying model."
+    )
     runtime_config: RuntimeConfig = Field(
         default_factory=RuntimeConfig,
         description="Runtime configuration controlling execution behaviour.",
@@ -52,7 +53,9 @@ class Embedder(BaseModel):
         try:
             from sentence_transformers import SentenceTransformer
         except Exception as exc:  # pragma: no cover - import failure is rare
-            raise ModelLoadError("Failed to import SentenceTransformer; is 'sentence-transformers' installed?") from exc
+            raise ModelLoadError(
+                "Failed to import SentenceTransformer; is 'sentence-transformers' installed?"
+            ) from exc
 
         try:
             self._model = SentenceTransformer(
@@ -103,14 +106,19 @@ class Embedder(BaseModel):
             if text is None:
                 raise EncodingError(f"Text at index {index} is None; expected a non-empty string.")
             if not isinstance(text, str):
-                raise EncodingError(f"Text at index {index} must be a string, got {type(text).__name__!s} instead.")
+                raise EncodingError(
+                    f"Text at index {index} must be a string, got {type(text).__name__!s} instead."
+                )
             if not text.strip():
                 raise EncodingError(f"Text at index {index} is empty or whitespace only.")
 
         # Determine whether caching is active for this call.
         use_cache = self.runtime_config.enable_cache and not self.runtime_config.convert_to_numpy
         if self.runtime_config.enable_cache and self.runtime_config.convert_to_numpy:
-            logger.debug("Embedding cache disabled because convert_to_numpy=True; falling back to direct encoding.")
+            logger.debug(
+                "Embedding cache disabled because convert_to_numpy=True; "
+                "falling back to direct encoding."
+            )
 
         # Split texts into cached and uncached sets while preserving indices so
         # results can be reassembled in the original order.
@@ -183,7 +191,6 @@ class Embedder(BaseModel):
             model_name=self.model_name,
             dimensions=dimensions,
         )
-
     def clear_cache(self) -> None:
         """Clear all cached embeddings for this embedder instance.
 
@@ -194,6 +201,7 @@ class Embedder(BaseModel):
         if self._cache:
             logger.debug("Clearing %d cached embeddings", len(self._cache))
         self._cache.clear()
+
 
     def similarity(
         self,
@@ -218,7 +226,8 @@ class Embedder(BaseModel):
         metric_normalised = metric.lower()
         if metric_normalised not in {"cosine", "dot"}:
             raise ValidationError(
-                f"Unsupported similarity metric {metric!r}. Supported metrics are 'cosine' and 'dot'."
+                f"Unsupported similarity metric {metric!r}. "
+                "Supported metrics are 'cosine' and 'dot'."
             )
 
         # Validate dimensionality before performing any computation.
@@ -241,7 +250,9 @@ class Embedder(BaseModel):
             norm1 = float(np.linalg.norm(arr1))
             norm2 = float(np.linalg.norm(arr2))
             if norm1 == 0.0 or norm2 == 0.0:
-                raise ValidationError("Cannot compute cosine similarity for zero-length embedding.")
+                raise ValidationError(
+                    "Cannot compute cosine similarity for zero-length embedding."
+                )
             score_value = float(np.dot(arr1, arr2) / (norm1 * norm2))
 
         return SimilarityScore(score=score_value, metric=metric_normalised)
@@ -272,10 +283,13 @@ class Embedder(BaseModel):
         """
         if len(embs1) != len(embs2):
             raise ValidationError(
-                f"similarity_batch inputs must have the same length; got {len(embs1)} and {len(embs2)}"
+                "similarity_batch inputs must have the same length; "
+                f"got {len(embs1)} and {len(embs2)}"
             )
 
         return [self.similarity(e1, e2, metric=metric) for e1, e2 in zip(embs1, embs2)]
+
+
 
     def search(
         self,
@@ -295,7 +309,31 @@ class Embedder(BaseModel):
         are encoded on the fly using :meth:`encode`. When ``corpus_embeddings`` are
         provided, only the queries are encoded and the given embeddings are reused,
         which is more efficient for repeated searches over a static corpus.
-        ...
+
+        Args:
+            queries: List of query texts to search for.
+            corpus: List of corpus documents to search over. Must be non-empty
+                when provided.
+            corpus_embeddings: Pre-computed corpus embeddings corresponding to a
+                separate corpus. When supplied, ``corpus`` must be omitted.
+            top_k: Maximum number of top matches to return per query. Must be at
+                least 1 and no greater than the corpus size when the corpus is
+                non-empty.
+            score_function: Similarity metric name. Currently accepts
+                ``"cosine"`` and ``"dot"``. For search, both options behave
+                identically and use cosine similarity for ranking.
+
+        Returns:
+            A :class:`SearchResults` instance containing, for each query, a list
+            of :class:`SearchResult` objects describing the best matching corpus
+            entries.
+
+        Raises:
+            ValidationError: If arguments are inconsistent (for example both
+                ``corpus`` and ``corpus_embeddings`` supplied), if ``top_k`` is
+                out of range, or if an unsupported ``score_function`` is
+                requested.
+            SearchError: If encoding or similarity computation fails.
         """
         # Handle trivial case first: no queries means no results regardless of corpus.
         if not queries:
@@ -303,33 +341,49 @@ class Embedder(BaseModel):
 
         # Exactly one of corpus or corpus_embeddings must be provided.
         if corpus is None and corpus_embeddings is None:
-            raise ValidationError("Either 'corpus' or 'corpus_embeddings' must be provided for search.")
+            raise ValidationError(
+                "Either 'corpus' or 'corpus_embeddings' must be provided for search."
+            )
         if corpus is not None and corpus_embeddings is not None:
-            raise ValidationError("Only one of 'corpus' or 'corpus_embeddings' may be provided, not both.")
+            raise ValidationError(
+                "Only one of 'corpus' or 'corpus_embeddings' may be provided, not both."
+            )
 
-        # Determine effective corpus size + handle empty corpus.
+        # Determine the effective corpus size and handle empty-corpus cases.
         if corpus is not None:
             corpus_size = len(corpus)
             if corpus_size == 0:
-                return SearchResults(results=[[] for _ in queries], query_texts=queries)
+                # No documents to search; each query simply has no hits.
+                return SearchResults(
+                    results=[[] for _ in queries],
+                    query_texts=queries,
+                )
         else:
             corpus_size = len(corpus_embeddings.embeddings)  # type: ignore[union-attr]
             if corpus_size == 0:
-                return SearchResults(results=[[] for _ in queries], query_texts=queries)
+                return SearchResults(
+                    results=[[] for _ in queries],
+                    query_texts=queries,
+                )
 
         metric_normalised = score_function.lower()
         if metric_normalised not in {"cosine", "dot"}:
             raise ValidationError(
-                f"Unsupported similarity metric {score_function!r}. Supported metrics are 'cosine' and 'dot'."
+                f"Unsupported similarity metric {score_function!r}. "
+                "Supported metrics are 'cosine' and 'dot'."
             )
 
-        # For search, both score functions behave like cosine.
+        # For search, both score functions behave like cosine: they use cosine
+        # similarity for ranking and scoring. This ensures stable behaviour
+        # across different backends while still accepting ``score_function='dot'``.
         similarity_metric = "cosine"
 
         if top_k < 1:
             raise ValidationError(f"top_k must be at least 1; got {top_k}.")
         if corpus_size and top_k > corpus_size:
-            raise ValidationError(f"top_k ({top_k}) cannot be greater than corpus size ({corpus_size}).")
+            raise ValidationError(
+                f"top_k ({top_k}) cannot be greater than corpus size ({corpus_size})."
+            )
 
         try:
             query_result = self.encode(queries)
@@ -344,6 +398,7 @@ class Embedder(BaseModel):
             all_results: list[list[SearchResult]] = []
 
             for query_embedding in query_result.embeddings:
+                # Compute similarity between this query and every corpus entry.
                 similarities = [
                     self.similarity(query_embedding, corpus_embedding, metric=similarity_metric)
                     for corpus_embedding in corpus_result.embeddings  # type: ignore[union-attr]
@@ -364,7 +419,7 @@ class Embedder(BaseModel):
                 all_results.append(query_hits)
 
             return SearchResults(results=all_results, query_texts=queries)
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:  # pragma: no cover - defensive; exercised via tests
             raise SearchError(f"Semantic search failed: {exc}") from exc
 
     @property
@@ -420,4 +475,3 @@ class Embedder(BaseModel):
         the filesystem path.
         """
         return Path(self.config.model_path).name
-
