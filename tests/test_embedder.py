@@ -9,8 +9,8 @@ import pytest
 
 from embeddify.config import EmbedderConfig, RuntimeConfig
 from embeddify.embedder import Embedder
-from embeddify.exceptions import EncodingError, ModelLoadError
-from embeddify.models import Embedding, EmbeddingResult
+from embeddify.exceptions import EncodingError, ModelLoadError, ValidationError
+from embeddify.models import Embedding, EmbeddingResult, SimilarityScore
 
 
 class TestEmbedderInitialisation:
@@ -242,3 +242,80 @@ class TestEncodeCaching:
 
         assert "shared text" in embedder_one._cache  # type: ignore[attr-defined]
         assert "shared text" not in embedder_two._cache  # type: ignore[attr-defined]
+
+
+class TestSimilarity:
+    def test_similarity_cosine_for_identical_embeddings_is_one(self, embedder: Embedder) -> None:
+        """Cosine similarity between identical embeddings should be 1.0."""
+        result = embedder.encode(["same text"])
+        embedding = result.embeddings[0]
+
+        score = embedder.similarity(embedding, embedding)
+
+        assert isinstance(score, SimilarityScore)
+        assert score.metric == "cosine"
+        assert score.score == pytest.approx(1.0)
+
+    def test_similarity_dot_product_uses_raw_vectors(self, embedder: Embedder) -> None:
+        """Dot product metric should compute the raw vector dot product."""
+        result = embedder.encode(["one", "two"])
+        emb_one, emb_two = result.embeddings
+
+        score = embedder.similarity(emb_one, emb_two, metric="dot")
+
+        # The dummy model in tests produces simple deterministic vectors; for the
+        # first two texts the expected dot product is easily computed.
+        assert score.metric == "dot"
+        assert score.score == pytest.approx(20.0)
+
+    def test_similarity_raises_for_dimension_mismatch(self, embedder: Embedder) -> None:
+        """Embeddings with different dimensions should raise a ValidationError."""
+        emb_small = Embedding(vector=[1.0, 2.0, 3.0], model_name="test", normalized=False)
+        emb_large = Embedding(vector=[1.0, 2.0, 3.0, 4.0], model_name="test", normalized=False)
+
+        with pytest.raises(ValidationError, match="dimension mismatch"):
+            embedder.similarity(emb_small, emb_large)
+
+    def test_similarity_raises_for_invalid_metric(self, embedder: Embedder) -> None:
+        """Unsupported metrics should raise a ValidationError before computation."""
+        result = embedder.encode(["one", "two"])
+        emb_one, emb_two = result.embeddings
+
+        with pytest.raises(ValidationError, match="Unsupported similarity metric"):
+            embedder.similarity(emb_one, emb_two, metric="euclidean")
+
+    def test_similarity_batch_returns_score_per_pair(self, embedder: Embedder) -> None:
+        """similarity_batch should return one score for each pair of embeddings."""
+        result_one = embedder.encode(["a", "b", "c"])
+        result_two = embedder.encode(["d", "e", "f"])
+
+        scores = embedder.similarity_batch(result_one.embeddings, result_two.embeddings)
+
+        assert len(scores) == 3
+        assert all(isinstance(score, SimilarityScore) for score in scores)
+
+    def test_similarity_batch_length_mismatch_raises(self, embedder: Embedder) -> None:
+        """Input lists for similarity_batch must have the same length."""
+        result_one = embedder.encode(["a", "b"])
+        result_two = embedder.encode(["c"])
+
+        with pytest.raises(ValidationError, match="must have the same length"):
+            embedder.similarity_batch(result_one.embeddings, result_two.embeddings)
+
+    def test_similarity_supports_numpy_vectors(self, embedder: Embedder) -> None:
+        """similarity should handle embeddings backed by numpy arrays."""
+        emb_one = Embedding(
+            vector=np.array([1.0, 0.0, 0.0, 0.0]),
+            model_name="test",
+            normalized=False,
+        )
+        emb_two = Embedding(
+            vector=np.array([1.0, 0.0, 0.0, 0.0]),
+            model_name="test",
+            normalized=False,
+        )
+
+        score = embedder.similarity(emb_one, emb_two)
+
+        assert score.metric == "cosine"
+        assert score.score == pytest.approx(1.0)

@@ -9,8 +9,8 @@ import numpy as np
 from pydantic import BaseModel, Field, PrivateAttr
 
 from embeddify.config import EmbedderConfig, RuntimeConfig, load_config_file
-from embeddify.exceptions import EncodingError, ModelLoadError
-from embeddify.models import Embedding, EmbeddingResult
+from embeddify.exceptions import EncodingError, ModelLoadError, ValidationError
+from embeddify.models import Embedding, EmbeddingResult, SimilarityScore
 logger = logging.getLogger(__name__)
 
 
@@ -201,6 +201,93 @@ class Embedder(BaseModel):
         if self._cache:
             logger.debug("Clearing %d cached embeddings", len(self._cache))
         self._cache.clear()
+
+
+    def similarity(
+        self,
+        emb1: Embedding,
+        emb2: Embedding,
+        metric: str = "cosine",
+    ) -> SimilarityScore:
+        """Compute similarity between two embeddings.
+
+        Args:
+            emb1: First embedding.
+            emb2: Second embedding.
+            metric: Similarity metric to use, either ``"cosine"`` or ``"dot"``.
+
+        Returns:
+            A :class:`SimilarityScore` object describing the similarity.
+
+        Raises:
+            ValidationError: If the embeddings have different dimensions or an
+                unsupported metric is requested.
+        """
+        metric_normalised = metric.lower()
+        if metric_normalised not in {"cosine", "dot"}:
+            raise ValidationError(
+                f"Unsupported similarity metric {metric!r}. "
+                "Supported metrics are 'cosine' and 'dot'."
+            )
+
+        # Validate dimensionality before performing any computation.
+        vec1 = emb1.vector
+        vec2 = emb2.vector
+
+        dim1 = int(vec1.shape[-1]) if isinstance(vec1, np.ndarray) else len(vec1)
+        dim2 = int(vec2.shape[-1]) if isinstance(vec2, np.ndarray) else len(vec2)
+
+        if dim1 != dim2:
+            raise ValidationError(f"Embedding dimension mismatch: {dim1} vs {dim2}")
+
+        arr1 = np.asarray(vec1, dtype=float)
+        arr2 = np.asarray(vec2, dtype=float)
+
+        if metric_normalised == "dot":
+            score_value = float(np.dot(arr1, arr2))
+        else:
+            # Cosine similarity: dot(a, b) / (||a|| * ||b||)
+            norm1 = float(np.linalg.norm(arr1))
+            norm2 = float(np.linalg.norm(arr2))
+            if norm1 == 0.0 or norm2 == 0.0:
+                raise ValidationError(
+                    "Cannot compute cosine similarity for zero-length embedding."
+                )
+            score_value = float(np.dot(arr1, arr2) / (norm1 * norm2))
+
+        return SimilarityScore(score=score_value, metric=metric_normalised)
+
+    def similarity_batch(
+        self,
+        embs1: list[Embedding],
+        embs2: list[Embedding],
+        metric: str = "cosine",
+    ) -> list[SimilarityScore]:
+        """Compute pairwise similarities between two lists of embeddings.
+
+        The two lists must have the same length; the *i*th result corresponds to
+        the similarity between ``embs1[i]`` and ``embs2[i]``.
+
+        Args:
+            embs1: First list of embeddings.
+            embs2: Second list of embeddings.
+            metric: Similarity metric to use, either ``"cosine"`` or ``"dot"``.
+
+        Returns:
+            A list of :class:`SimilarityScore` instances, one per input pair.
+
+        Raises:
+            ValidationError: If the input lists have different lengths, if the
+                embeddings in a pair have mismatched dimensions or if an
+                unsupported metric is requested.
+        """
+        if len(embs1) != len(embs2):
+            raise ValidationError(
+                "similarity_batch inputs must have the same length; "
+                f"got {len(embs1)} and {len(embs2)}"
+            )
+
+        return [self.similarity(e1, e2, metric=metric) for e1, e2 in zip(embs1, embs2)]
 
     @property
     def model_name(self) -> str:
