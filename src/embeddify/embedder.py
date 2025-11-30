@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import logging
 
 import numpy as np
 from pydantic import BaseModel, Field, PrivateAttr
@@ -10,6 +11,7 @@ from pydantic import BaseModel, Field, PrivateAttr
 from embeddify.config import EmbedderConfig, RuntimeConfig, load_config_file
 from embeddify.exceptions import EncodingError, ModelLoadError
 from embeddify.models import Embedding, EmbeddingResult
+logger = logging.getLogger(__name__)
 
 
 class Embedder(BaseModel):
@@ -67,12 +69,14 @@ class Embedder(BaseModel):
             ) from exc
 
     def encode(self, texts: str | list[str]) -> EmbeddingResult:
-        """Encode one or more texts into embeddings.
+        """Encode one or more texts into embeddings with optional caching.
 
         The method accepts either a single string or a list of strings, validates the
         inputs and delegates to the underlying SentenceTransformer model. The raw
         vectors are wrapped in :class:`Embedding` instances and returned inside an
-        :class:`EmbeddingResult`.
+        :class:`EmbeddingResult`. When caching is enabled via
+        :class:`RuntimeConfig`, repeated texts will reuse previously computed
+        :class:`Embedding` objects.
 
         Args:
             texts: A single text string or a list of text strings to encode.
@@ -108,38 +112,77 @@ class Embedder(BaseModel):
             if not text.strip():
                 raise EncodingError(f"Text at index {index} is empty or whitespace only.")
 
-        try:
-            vectors = self._model.encode(
-                input_texts,
-                batch_size=self.runtime_config.batch_size,
-                show_progress_bar=self.runtime_config.show_progress_bar,
-                normalize_embeddings=self.config.normalize_embeddings,
-                convert_to_numpy=self.runtime_config.convert_to_numpy,
+        # Determine whether caching is active for this call.
+        use_cache = self.runtime_config.enable_cache and not self.runtime_config.convert_to_numpy
+        if self.runtime_config.enable_cache and self.runtime_config.convert_to_numpy:
+            logger.debug(
+                "Embedding cache disabled because convert_to_numpy=True; "
+                "falling back to direct encoding."
             )
-        except Exception as exc:
-            raise EncodingError(f"Failed to encode texts with underlying model: {exc}") from exc
 
-        # SentenceTransformer.encode may return either a list of vectors or a
-        # numpy array with shape (n_texts, dim). We normalise this to an
-        # iterable of per-text vectors.
-        if isinstance(vectors, np.ndarray):
-            if vectors.ndim == 1:
-                per_text_vectors = [vectors]
-            else:
-                per_text_vectors = [vectors[i] for i in range(vectors.shape[0])]
+        # Split texts into cached and uncached sets while preserving indices so
+        # results can be reassembled in the original order.
+        cached_embeddings: dict[int, Embedding] = {}
+        uncached_texts: list[str] = []
+        uncached_indices: list[int] = []
+
+        if use_cache:
+            for index, text in enumerate(input_texts):
+                cached = self._cache.get(text)
+                if cached is not None:
+                    logger.debug("Cache hit for text at index %d", index)
+                    cached_embeddings[index] = cached
+                else:
+                    logger.debug("Cache miss for text at index %d", index)
+                    uncached_texts.append(text)
+                    uncached_indices.append(index)
         else:
-            per_text_vectors = list(vectors)
+            uncached_texts = input_texts
+            uncached_indices = list(range(len(input_texts)))
 
-        embeddings: list[Embedding] = []
-        for text, vector in zip(input_texts, per_text_vectors):
-            embeddings.append(
-                Embedding(
+        new_embeddings_by_index: dict[int, Embedding] = {}
+        if uncached_texts:
+            try:
+                vectors = self._model.encode(
+                    uncached_texts,
+                    batch_size=self.runtime_config.batch_size,
+                    show_progress_bar=self.runtime_config.show_progress_bar,
+                    normalize_embeddings=self.config.normalize_embeddings,
+                    convert_to_numpy=self.runtime_config.convert_to_numpy,
+                )
+            except Exception as exc:
+                raise EncodingError(f"Failed to encode texts with underlying model: {exc}") from exc
+
+            # SentenceTransformer.encode may return either a list of vectors or a
+            # numpy array with shape (n_texts, dim). We normalise this to an
+            # iterable of per-text vectors.
+            if isinstance(vectors, np.ndarray):
+                if vectors.ndim == 1:
+                    per_text_vectors = [vectors]
+                else:
+                    per_text_vectors = [vectors[i] for i in range(vectors.shape[0])]
+            else:
+                per_text_vectors = list(vectors)
+
+            for index, text, vector in zip(uncached_indices, uncached_texts, per_text_vectors):
+                embedding = Embedding(
                     vector=vector,
                     model_name=self.model_name,
                     normalized=self.config.normalize_embeddings,
                     text=text,
                 )
-            )
+                new_embeddings_by_index[index] = embedding
+                if use_cache:
+                    self._cache[text] = embedding
+
+        # Reassemble embeddings in original input order using both cached and
+        # newly encoded values.
+        embeddings: list[Embedding] = []
+        for index in range(len(input_texts)):
+            if index in cached_embeddings:
+                embeddings.append(cached_embeddings[index])
+            else:
+                embeddings.append(new_embeddings_by_index[index])
 
         dimensions = embeddings[0].dimensions if embeddings else 0
 
@@ -148,6 +191,16 @@ class Embedder(BaseModel):
             model_name=self.model_name,
             dimensions=dimensions,
         )
+    def clear_cache(self) -> None:
+        """Clear all cached embeddings for this embedder instance.
+
+        The cache is maintained per :class:`Embedder` instance and keyed by the
+        original text string. This method removes all cached entries, forcing
+        subsequent :meth:`encode` calls to recompute embeddings.
+        """
+        if self._cache:
+            logger.debug("Clearing %d cached embeddings", len(self._cache))
+        self._cache.clear()
 
     @property
     def model_name(self) -> str:

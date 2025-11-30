@@ -155,3 +155,90 @@ class TestEmbedderEncode:
 
         vector = result.embeddings[0].vector
         assert isinstance(vector, np.ndarray)
+
+class TestEncodeCaching:
+    def test_cache_disabled_by_default(self, embedder: Embedder) -> None:
+        """Cache should be disabled when enable_cache is False."""
+        first = embedder.encode(["hello"])
+        second = embedder.encode(["hello"])
+
+        assert first.embeddings[0].vector == second.embeddings[0].vector
+        # Without caching the returned Embedding instances should be distinct.
+        assert first.embeddings[0] is not second.embeddings[0]
+        assert embedder._cache == {}  # type: ignore[attr-defined]
+
+    def test_cache_enabled_reuses_embeddings(
+        self,
+        embedder_config: EmbedderConfig,
+    ) -> None:
+        """When caching is enabled repeated texts reuse the same Embedding."""
+        runtime_config = RuntimeConfig(enable_cache=True)
+        embedder = Embedder(config=embedder_config, runtime_config=runtime_config)
+
+        first = embedder.encode(["cached text"])
+        second = embedder.encode(["cached text"])
+
+        assert first.embeddings[0] is second.embeddings[0]
+        assert list(embedder._cache.keys()) == ["cached text"]  # type: ignore[attr-defined]
+
+    def test_cache_bypassed_when_convert_to_numpy_enabled(
+        self,
+        embedder_config: EmbedderConfig,
+    ) -> None:
+        """Enabling convert_to_numpy should disable caching entirely."""
+        runtime_config = RuntimeConfig(enable_cache=True, convert_to_numpy=True)
+        embedder = Embedder(config=embedder_config, runtime_config=runtime_config)
+
+        first = embedder.encode(["numpy text"])
+        second = embedder.encode(["numpy text"])
+
+        assert isinstance(first.embeddings[0].vector, np.ndarray)
+        assert isinstance(second.embeddings[0].vector, np.ndarray)
+        # Caching is disabled so each call should yield distinct Embedding objects.
+        assert first.embeddings[0] is not second.embeddings[0]
+        assert embedder._cache == {}  # type: ignore[attr-defined]
+
+    def test_clear_cache_empties_internal_cache(
+        self,
+        embedder_config: EmbedderConfig,
+    ) -> None:
+        """clear_cache should remove all cached entries."""
+        runtime_config = RuntimeConfig(enable_cache=True)
+        embedder = Embedder(config=embedder_config, runtime_config=runtime_config)
+
+        embedder.encode(["to be cached"])
+        assert embedder._cache  # type: ignore[attr-defined]
+
+        embedder.clear_cache()
+        assert embedder._cache == {}  # type: ignore[attr-defined]
+
+    def test_cache_handles_mixed_cached_and_uncached_texts_in_order(
+        self,
+        embedder_config: EmbedderConfig,
+    ) -> None:
+        """Encoding with partially cached inputs must preserve input order."""
+        runtime_config = RuntimeConfig(enable_cache=True)
+        embedder = Embedder(config=embedder_config, runtime_config=runtime_config)
+
+        first = embedder.encode(["one", "two"])
+        # Second call shares "two" and introduces a new text "three".
+        second = embedder.encode(["two", "three"])
+
+        assert [e.text for e in second.embeddings] == ["two", "three"]
+        # The embedding for "two" should be exactly the same object as in the first result.
+        assert second.embeddings[0] is first.embeddings[1]
+
+    def test_cache_is_isolated_per_embedder_instance(
+        self,
+        embedder_config: EmbedderConfig,
+    ) -> None:
+        """Each Embedder instance maintains its own cache."""
+        runtime_config = RuntimeConfig(enable_cache=True)
+
+        embedder_one = Embedder(config=embedder_config, runtime_config=runtime_config)
+        embedder_two = Embedder(config=embedder_config, runtime_config=runtime_config)
+
+        embedder_one.encode(["shared text"])
+
+        assert "shared text" in embedder_one._cache  # type: ignore[attr-defined]
+        assert "shared text" not in embedder_two._cache  # type: ignore[attr-defined]
