@@ -4,11 +4,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from pydantic import BaseModel, Field, PrivateAttr
 
 from embeddify.config import EmbedderConfig, RuntimeConfig, load_config_file
-from embeddify.exceptions import ModelLoadError
-from embeddify.models import Embedding
+from embeddify.exceptions import EncodingError, ModelLoadError
+from embeddify.models import Embedding, EmbeddingResult
 
 
 class Embedder(BaseModel):
@@ -64,6 +65,89 @@ class Embedder(BaseModel):
             raise ModelLoadError(
                 f"Failed to load SentenceTransformer model from {self.config.model_path!r}: {exc}"
             ) from exc
+
+    def encode(self, texts: str | list[str]) -> EmbeddingResult:
+        """Encode one or more texts into embeddings.
+
+        The method accepts either a single string or a list of strings, validates the
+        inputs and delegates to the underlying SentenceTransformer model. The raw
+        vectors are wrapped in :class:`Embedding` instances and returned inside an
+        :class:`EmbeddingResult`.
+
+        Args:
+            texts: A single text string or a list of text strings to encode.
+
+        Returns:
+            An :class:`EmbeddingResult` containing one :class:`Embedding` per input
+            text. When an empty list is supplied the result will contain no
+            embeddings and ``dimensions`` will be set to ``0``.
+
+        Raises:
+            EncodingError: If any of the supplied texts are invalid or if the
+                underlying model raises an exception during encoding.
+        """
+        # Normalise to a list so the rest of the implementation can assume a
+        # consistent shape.
+        if isinstance(texts, str):
+            input_texts: list[str] = [texts]
+        else:
+            input_texts = list(texts)
+
+        if not input_texts:
+            return EmbeddingResult(embeddings=[], model_name=self.model_name, dimensions=0)
+
+        # Validate the individual text entries before calling into the model so
+        # we can raise domain specific errors.
+        for index, text in enumerate(input_texts):
+            if text is None:
+                raise EncodingError(f"Text at index {index} is None; expected a non-empty string.")
+            if not isinstance(text, str):
+                raise EncodingError(
+                    f"Text at index {index} must be a string, got {type(text).__name__!s} instead."
+                )
+            if not text.strip():
+                raise EncodingError(f"Text at index {index} is empty or whitespace only.")
+
+        try:
+            vectors = self._model.encode(
+                input_texts,
+                batch_size=self.runtime_config.batch_size,
+                show_progress_bar=self.runtime_config.show_progress_bar,
+                normalize_embeddings=self.config.normalize_embeddings,
+                convert_to_numpy=self.runtime_config.convert_to_numpy,
+            )
+        except Exception as exc:
+            raise EncodingError(f"Failed to encode texts with underlying model: {exc}") from exc
+
+        # SentenceTransformer.encode may return either a list of vectors or a
+        # numpy array with shape (n_texts, dim). We normalise this to an
+        # iterable of per-text vectors.
+        if isinstance(vectors, np.ndarray):
+            if vectors.ndim == 1:
+                per_text_vectors = [vectors]
+            else:
+                per_text_vectors = [vectors[i] for i in range(vectors.shape[0])]
+        else:
+            per_text_vectors = list(vectors)
+
+        embeddings: list[Embedding] = []
+        for text, vector in zip(input_texts, per_text_vectors):
+            embeddings.append(
+                Embedding(
+                    vector=vector,
+                    model_name=self.model_name,
+                    normalized=self.config.normalize_embeddings,
+                    text=text,
+                )
+            )
+
+        dimensions = embeddings[0].dimensions if embeddings else 0
+
+        return EmbeddingResult(
+            embeddings=embeddings,
+            model_name=self.model_name,
+            dimensions=dimensions,
+        )
 
     @property
     def model_name(self) -> str:

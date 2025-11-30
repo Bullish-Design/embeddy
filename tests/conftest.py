@@ -6,6 +6,8 @@ import types
 from pathlib import Path
 from typing import Generator
 
+
+import numpy as np
 import pytest
 
 # Ensure the local ``src`` tree is importable as a package when running tests
@@ -49,6 +51,39 @@ def _install_dummy_sentence_transformers() -> Generator[None, None, None]:
                 self.model_name_or_path = model_name_or_path
                 self.device = device or "cpu"
                 self.trust_remote_code = bool(trust_remote_code)
+            def encode(
+                self,
+                sentences,
+                batch_size: int = 32,
+                show_progress_bar: bool = False,
+                normalize_embeddings: bool = True,
+                convert_to_numpy: bool = False,
+                **_: object,
+            ):
+                """Return simple deterministic vectors for the provided sentences.
+
+                The exact numeric values are unimportant; tests assert on shape and
+                basic properties rather than specific magnitudes.
+                """
+                if isinstance(sentences, str):
+                    texts = [sentences]
+                else:
+                    texts = list(sentences)
+
+                vectors: list[object] = []
+                dim = self.get_sentence_embedding_dimension()
+                for index, _text in enumerate(texts):
+                    base = float(index)
+                    data = [base + float(i) for i in range(dim)]
+                    if convert_to_numpy:
+                        vectors.append(np.array(data, dtype=float))
+                    else:
+                        vectors.append(data)
+                return vectors
+
+            def get_sentence_embedding_dimension(self) -> int:
+                """Return the dimensionality of embeddings produced by this dummy model."""
+                return 4
 
         module.SentenceTransformer = DummySentenceTransformer  # type: ignore[attr-defined]
         sys.modules["sentence_transformers"] = module

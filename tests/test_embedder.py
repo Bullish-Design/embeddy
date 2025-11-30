@@ -4,12 +4,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, cast
 
+import numpy as np
 import pytest
 
 from embeddify.config import EmbedderConfig, RuntimeConfig
 from embeddify.embedder import Embedder
-from embeddify.exceptions import ModelLoadError
-from embeddify.models import Embedding
+from embeddify.exceptions import EncodingError, ModelLoadError
+from embeddify.models import Embedding, EmbeddingResult
 
 
 class TestEmbedderInitialisation:
@@ -89,3 +90,68 @@ runtime:
         """Embedder should initialise an empty in-memory cache for future steps."""
         cache = cast(dict[str, Embedding], embedder._cache)  # type: ignore[attr-defined]
         assert cache == {}
+
+
+
+class TestEmbedderEncode:
+    def test_encode_single_text_returns_embedding_result(self, embedder: Embedder) -> None:
+        """Encoding a single string should yield one embedding in the result."""
+        result = embedder.encode("hello world")
+
+        assert isinstance(result, EmbeddingResult)
+        assert len(result.embeddings) == 1
+
+        embedding = result.embeddings[0]
+        assert embedding.text == "hello world"
+        assert embedding.model_name == embedder.model_name
+        assert embedding.normalized == embedder.config.normalize_embeddings
+
+        assert result.model_name == embedder.model_name
+        assert result.dimensions == embedding.dimensions
+
+    def test_encode_list_of_texts_produces_matching_embeddings(self, embedder: Embedder) -> None:
+        """Encoding a list of texts should yield one embedding per text."""
+        texts = ["one", "two", "three"]
+
+        result = embedder.encode(texts)
+
+        assert len(result.embeddings) == len(texts)
+        assert result.model_name == embedder.model_name
+
+        dims = {embedding.dimensions for embedding in result.embeddings}
+        assert len(dims) == 1  # All embeddings share the same dimensionality.
+
+        for original, embedding in zip(texts, result.embeddings):
+            assert embedding.text == original
+
+    def test_encode_empty_list_returns_empty_result(self, embedder: Embedder) -> None:
+        """Encoding an empty list should return an empty EmbeddingResult."""
+        result = embedder.encode([])
+
+        assert isinstance(result, EmbeddingResult)
+        assert result.embeddings == []
+        assert result.dimensions == 0
+
+    def test_encode_with_none_entry_raises_encoding_error(self, embedder: Embedder) -> None:
+        """None entries must be rejected with a clear EncodingError."""
+        with pytest.raises(EncodingError):
+            embedder.encode(["valid", None])  # type: ignore[list-item]
+
+    def test_encode_with_empty_string_raises_encoding_error(self, embedder: Embedder) -> None:
+        """Empty or whitespace-only strings are not valid inputs."""
+        with pytest.raises(EncodingError):
+            embedder.encode("   ")
+
+    def test_encode_respects_convert_to_numpy_runtime_flag(
+        self,
+        embedder_config: EmbedderConfig,
+    ) -> None:
+        """When convert_to_numpy is enabled vectors should be numpy arrays."""
+        runtime_config = RuntimeConfig(convert_to_numpy=True)
+        embedder = Embedder(config=embedder_config, runtime_config=runtime_config)
+
+        result = embedder.encode(["hello numpy"])
+        assert len(result.embeddings) == 1
+
+        vector = result.embeddings[0].vector
+        assert isinstance(vector, np.ndarray)
