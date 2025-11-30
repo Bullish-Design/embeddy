@@ -7,7 +7,7 @@ import types
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
-from embeddify.config import EmbedderConfig
+from embeddify.config import EmbedderConfig, RuntimeConfig
 from embeddify.exceptions import ValidationError as EmbeddifyValidationError
 
 
@@ -89,3 +89,82 @@ class TestEmbedderConfigFromEnv:
 
         with pytest.raises(EmbeddifyValidationError):
             EmbedderConfig.from_env()
+
+
+class TestRuntimeConfigValidation:
+    def test_default_runtime_config_values(self) -> None:
+        config = RuntimeConfig()
+
+        assert config.batch_size == 32
+        assert config.show_progress_bar is False
+        assert config.enable_cache is False
+        assert config.convert_to_numpy is False
+
+    def test_batch_size_less_than_one_raises_validation_error(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            RuntimeConfig(batch_size=0)
+
+        with pytest.raises(PydanticValidationError):
+            RuntimeConfig(batch_size=-1)
+
+    def test_cache_numpy_incompatible_logs_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level("WARNING", logger="embeddify.config")
+
+        RuntimeConfig(enable_cache=True, convert_to_numpy=True)
+
+        warnings = [
+            record
+            for record in caplog.records
+            if record.levelname == "WARNING"
+            and "enable_cache=True is incompatible with convert_to_numpy=True"
+            in record.getMessage()
+        ]
+        assert warnings, "Expected warning about cache/NumPy incompatibility."
+
+
+class TestRuntimeConfigFromEnv:
+    def test_from_env_uses_defaults_when_unset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("EMBEDDIFY_BATCH_SIZE", raising=False)
+        monkeypatch.delenv("EMBEDDIFY_SHOW_PROGRESS_BAR", raising=False)
+        monkeypatch.delenv("EMBEDDIFY_ENABLE_CACHE", raising=False)
+        monkeypatch.delenv("EMBEDDIFY_CONVERT_TO_NUMPY", raising=False)
+
+        config = RuntimeConfig.from_env()
+
+        assert config.batch_size == 32
+        assert config.show_progress_bar is False
+        assert config.enable_cache is False
+        assert config.convert_to_numpy is False
+
+    def test_from_env_parses_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("EMBEDDIFY_BATCH_SIZE", "16")
+        monkeypatch.setenv("EMBEDDIFY_SHOW_PROGRESS_BAR", "1")
+        monkeypatch.setenv("EMBEDDIFY_ENABLE_CACHE", "true")
+        monkeypatch.setenv("EMBEDDIFY_CONVERT_TO_NUMPY", "0")
+
+        config = RuntimeConfig.from_env()
+
+        assert config.batch_size == 16
+        assert config.show_progress_bar is True
+        assert config.enable_cache is True
+        assert config.convert_to_numpy is False
+
+    def test_from_env_invalid_batch_size_raises_validation_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("EMBEDDIFY_BATCH_SIZE", "not-an-int")
+
+        with pytest.raises(EmbeddifyValidationError):
+            RuntimeConfig.from_env()
+
+    def test_from_env_invalid_boolean_raises_validation_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("EMBEDDIFY_ENABLE_CACHE", "maybe")
+
+        with pytest.raises(EmbeddifyValidationError):
+            RuntimeConfig.from_env()

@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import os
 import re
+import logging
+from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from embeddify.exceptions import ValidationError as EmbeddifyValidationError
 
@@ -148,4 +150,97 @@ class EmbedderConfig(BaseModel):
             # Wrap any underlying Pydantic validation error with a domain-level error.
             raise EmbeddifyValidationError(
                 f"Invalid Embedder configuration from environment: {exc}"
+            ) from exc
+
+
+class RuntimeConfig(BaseModel):
+    """Configuration for runtime execution behaviour.
+
+    This model controls batch processing, progress reporting, caching and output
+    format. It is intentionally separate from :class:`EmbedderConfig` so that
+    runtime concerns can be tuned independently of model loading.
+    """
+
+    batch_size: int = Field(
+        default=32,
+        description="Number of texts to encode per batch.",
+    )
+    show_progress_bar: bool = Field(
+        default=False,
+        description="Whether to display a progress bar for batch operations.",
+    )
+    enable_cache: bool = Field(
+        default=False,
+        description="Cache encoded texts to avoid recomputation.",
+    )
+    convert_to_numpy: bool = Field(
+        default=False,
+        description="Return embeddings as numpy.ndarray instead of list[float].",
+    )
+
+    @field_validator("batch_size")
+    @classmethod
+    def validate_batch_size(cls, value: int) -> int:
+        """Ensure ``batch_size`` is at least one."""
+        if value < 1:
+            raise ValueError("batch_size must be at least 1")
+        return value
+
+    @model_validator(mode="after")
+    def warn_cache_numpy_incompatible(self) -> "RuntimeConfig":
+        """Emit warning when cache and numpy output are requested together."""
+        if self.enable_cache and self.convert_to_numpy:
+            logging.getLogger(__name__).warning(
+                "RuntimeConfig: enable_cache=True is incompatible with "
+                "convert_to_numpy=True; caching will be disabled."
+            )
+        return self
+
+    @classmethod
+    def from_env(cls) -> "RuntimeConfig":
+        """Construct runtime configuration from environment variables.
+
+        Environment variables:
+            EMBEDDIFY_BATCH_SIZE (optional)
+            EMBEDDIFY_SHOW_PROGRESS_BAR (optional boolean)
+            EMBEDDIFY_ENABLE_CACHE (optional boolean)
+            EMBEDDIFY_CONVERT_TO_NUMPY (optional boolean)
+        """
+        kwargs: dict[str, Any] = {}
+
+        batch_raw = os.getenv("EMBEDDIFY_BATCH_SIZE")
+        if batch_raw is not None:
+            try:
+                kwargs["batch_size"] = int(batch_raw)
+            except ValueError as exc:  # pragma: no cover - edge parsing path
+                raise EmbeddifyValidationError(
+                    f"Invalid integer value {batch_raw!r} for EMBEDDIFY_BATCH_SIZE."
+                ) from exc
+
+        def _apply_bool(raw: str | None, env_name: str, key: str) -> None:
+            if raw is None:
+                return
+            kwargs[key] = EmbedderConfig._parse_bool_env(raw, env_name)
+
+        _apply_bool(
+            os.getenv("EMBEDDIFY_SHOW_PROGRESS_BAR"),
+            "EMBEDDIFY_SHOW_PROGRESS_BAR",
+            "show_progress_bar",
+        )
+        _apply_bool(
+            os.getenv("EMBEDDIFY_ENABLE_CACHE"),
+            "EMBEDDIFY_ENABLE_CACHE",
+            "enable_cache",
+        )
+        _apply_bool(
+            os.getenv("EMBEDDIFY_CONVERT_TO_NUMPY"),
+            "EMBEDDIFY_CONVERT_TO_NUMPY",
+            "convert_to_numpy",
+        )
+
+        try:
+            return cls(**kwargs)
+        except Exception as exc:
+            raise EmbeddifyValidationError(
+                f"Invalid Runtime configuration from environment: {exc}"
             ) from exc
