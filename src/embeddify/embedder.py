@@ -290,29 +290,37 @@ class Embedder(BaseModel):
         return [self.similarity(e1, e2, metric=metric) for e1, e2 in zip(embs1, embs2)]
 
 
+
     def search(
         self,
         queries: list[str],
-        corpus: list[str],
+        corpus: list[str] | None = None,
+        corpus_embeddings: EmbeddingResult | None = None,
         top_k: int = 5,
         score_function: str = "cosine",
     ) -> SearchResults:
         """Perform semantic search over a corpus of texts.
 
-        This initial implementation encodes both the queries and the corpus on
-        the fly using :meth:`encode` and then computes pairwise similarities
-        between each query and every corpus entry. The top ``top_k`` highest
-        scoring results for each query are returned in a :class:`SearchResults`
-        container.
+        The search can operate either on raw corpus texts or on pre-computed
+        corpus embeddings. Exactly one of ``corpus`` or ``corpus_embeddings``
+        must be provided.
+
+        When a plain text ``corpus`` is supplied, both the queries and the
+        corpus are encoded on the fly using :meth:`encode`. When
+        ``corpus_embeddings`` are provided, only the queries are encoded and the
+        given embeddings are reused, which is more efficient for repeated
+        searches over a static corpus.
 
         Args:
-            queries: Text queries to search for.
-            corpus: Corpus of documents to search within.
-            top_k: Number of top results to return per query. Must be at least
-                ``1`` and no greater than the corpus size when the corpus is
-                non-empty.
-            score_function: Similarity metric to use, either ``"cosine"`` or
-                ``"dot"``.
+            queries: The list of query texts to search for.
+            corpus: Optional list of corpus texts to search over. Mutually
+                exclusive with ``corpus_embeddings``.
+            corpus_embeddings: Optional pre-computed embeddings for the corpus.
+                Mutually exclusive with ``corpus``.
+            top_k: Maximum number of results to return per query. Must be at
+                least 1 and cannot exceed the size of the effective corpus.
+            score_function: Similarity metric to use. Supported values are
+                ``"cosine"`` and ``"dot"``.
 
         Returns:
             A :class:`SearchResults` instance containing, for each query, a list
@@ -320,18 +328,41 @@ class Embedder(BaseModel):
             entries.
 
         Raises:
-            ValidationError: If ``top_k`` is out of range or an unsupported
-                ``score_function`` is requested.
+            ValidationError: If the configuration of arguments is invalid, if
+                ``top_k`` is out of range, or if an unsupported ``score_function``
+                is requested.
             SearchError: If encoding or similarity computation fails.
         """
-        # Handle trivial cases early to avoid unnecessary work.
+        # Handle trivial case first: no queries means no results regardless of corpus.
         if not queries:
             return SearchResults(results=[], query_texts=[])
 
-        if not corpus:
-            # No documents to search; each query simply has no hits.
-            empty_results: list[list[SearchResult]] = [[] for _ in queries]
-            return SearchResults(results=empty_results, query_texts=queries)
+        # Exactly one of corpus or corpus_embeddings must be provided.
+        if corpus is None and corpus_embeddings is None:
+            raise ValidationError(
+                "Either 'corpus' or 'corpus_embeddings' must be provided for search."
+            )
+        if corpus is not None and corpus_embeddings is not None:
+            raise ValidationError(
+                "Only one of 'corpus' or 'corpus_embeddings' may be provided, not both."
+            )
+
+        # Determine the effective corpus size and handle empty-corpus cases.
+        if corpus is not None:
+            corpus_size = len(corpus)
+            if corpus_size == 0:
+                # No documents to search; each query simply has no hits.
+                return SearchResults(
+                    results=[[] for _ in queries],
+                    query_texts=queries,
+                )
+        else:
+            corpus_size = len(corpus_embeddings.embeddings)  # type: ignore[union-attr]
+            if corpus_size == 0:
+                return SearchResults(
+                    results=[[] for _ in queries],
+                    query_texts=queries,
+                )
 
         metric_normalised = score_function.lower()
         if metric_normalised not in {"cosine", "dot"}:
@@ -342,14 +373,20 @@ class Embedder(BaseModel):
 
         if top_k < 1:
             raise ValidationError(f"top_k must be at least 1; got {top_k}.")
-        if len(corpus) and top_k > len(corpus):
+        if corpus_size and top_k > corpus_size:
             raise ValidationError(
-                f"top_k ({top_k}) cannot be greater than corpus size ({len(corpus)})."
+                f"top_k ({top_k}) cannot be greater than corpus size ({corpus_size})."
             )
 
         try:
             query_result = self.encode(queries)
-            corpus_result = self.encode(corpus)
+
+            if corpus is not None:
+                corpus_result = self.encode(corpus)
+                corpus_texts: list[str] | None = corpus
+            else:
+                corpus_result = corpus_embeddings  # type: ignore[assignment]
+                corpus_texts = None
 
             all_results: list[list[SearchResult]] = []
 
@@ -357,7 +394,7 @@ class Embedder(BaseModel):
                 # Compute similarity between this query and every corpus entry.
                 similarities = [
                     self.similarity(query_embedding, corpus_embedding, metric=metric_normalised)
-                    for corpus_embedding in corpus_result.embeddings
+                    for corpus_embedding in corpus_result.embeddings  # type: ignore[union-attr]
                 ]
 
                 indexed_scores = list(enumerate(similarities))
@@ -368,7 +405,7 @@ class Embedder(BaseModel):
                     SearchResult(
                         corpus_id=corpus_index,
                         score=score.score,
-                        text=corpus[corpus_index],
+                        text=corpus_texts[corpus_index] if corpus_texts is not None else None,
                     )
                     for corpus_index, score in top_hits
                 ]

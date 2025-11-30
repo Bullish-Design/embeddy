@@ -484,3 +484,73 @@ class TestEmbedderSearch:
         assert len(dot_results.results[0]) == len(cosine_results.results[0])
         # Both metrics should pick the same best-matching corpus entry.
         assert dot_results.results[0][0].corpus_id == cosine_results.results[0][0].corpus_id
+
+    def test_search_with_precomputed_corpus_embeddings_matches_corpus_search(
+        self,
+        embedder: Embedder,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Search using pre-computed corpus embeddings should match corpus search.
+
+        The ranking (``corpus_id`` order and scores) must be identical to a
+        search that encodes the corpus on the fly, while ``text`` is omitted
+        for pre-computed searches.
+        """
+        self._patch_deterministic_encode(embedder, monkeypatch)
+
+        queries = ["alpha", "beta"]
+        corpus = ["alpha", "gamma", "beta"]
+
+        corpus_embeddings = embedder.encode(corpus)
+
+        corpus_results = embedder.search(
+            queries=queries,
+            corpus=corpus,
+            top_k=2,
+            score_function="cosine",
+        )
+        precomputed_results = embedder.search(
+            queries=queries,
+            corpus_embeddings=corpus_embeddings,
+            top_k=2,
+            score_function="cosine",
+        )
+
+        assert len(precomputed_results.results) == len(corpus_results.results)
+
+        for hits_pre, hits_corpus in zip(precomputed_results.results, corpus_results.results):
+            assert len(hits_pre) == len(hits_corpus)
+            for hit_pre, hit_corpus in zip(hits_pre, hits_corpus):
+                assert hit_pre.corpus_id == hit_corpus.corpus_id
+                assert hit_pre.score == pytest.approx(hit_corpus.score)
+                # When using pre-computed embeddings, corpus text is not available.
+                assert hit_pre.text is None
+                assert hit_corpus.text is not None
+
+    def test_search_with_both_corpus_and_embeddings_raises_validation_error(
+        self,
+        embedder: Embedder,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Providing both ``corpus`` and ``corpus_embeddings`` must be rejected."""
+        self._patch_deterministic_encode(embedder, monkeypatch)
+
+        corpus = ["alpha", "beta"]
+        corpus_embeddings = embedder.encode(corpus)
+
+        with pytest.raises(ValidationError):
+            embedder.search(
+                queries=["alpha"],
+                corpus=corpus,
+                corpus_embeddings=corpus_embeddings,
+                top_k=1,
+            )
+
+    def test_search_with_neither_corpus_nor_embeddings_raises_validation_error(
+        self,
+        embedder: Embedder,
+    ) -> None:
+        """Omitting both ``corpus`` and ``corpus_embeddings`` must fail fast."""
+        with pytest.raises(ValidationError):
+            embedder.search(queries=["alpha"])
+
