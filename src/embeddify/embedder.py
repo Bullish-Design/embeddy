@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, PrivateAttr
 from embeddify.config import EmbedderConfig, RuntimeConfig, load_config_file
 from embeddify.exceptions import EncodingError, ModelLoadError, SearchError, ValidationError
 from embeddify.models import Embedding, EmbeddingResult, SearchResult, SearchResults, SimilarityScore
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,9 +27,7 @@ class Embedder(BaseModel):
     validated eagerly and so that consumers benefit from rich type hints.
     """
 
-    config: EmbedderConfig = Field(
-        description="Validated configuration used to load the underlying model."
-    )
+    config: EmbedderConfig = Field(description="Validated configuration used to load the underlying model.")
     runtime_config: RuntimeConfig = Field(
         default_factory=RuntimeConfig,
         description="Runtime configuration controlling execution behaviour.",
@@ -53,9 +52,7 @@ class Embedder(BaseModel):
         try:
             from sentence_transformers import SentenceTransformer
         except Exception as exc:  # pragma: no cover - import failure is rare
-            raise ModelLoadError(
-                "Failed to import SentenceTransformer; is 'sentence-transformers' installed?"
-            ) from exc
+            raise ModelLoadError("Failed to import SentenceTransformer; is 'sentence-transformers' installed?") from exc
 
         try:
             self._model = SentenceTransformer(
@@ -106,19 +103,14 @@ class Embedder(BaseModel):
             if text is None:
                 raise EncodingError(f"Text at index {index} is None; expected a non-empty string.")
             if not isinstance(text, str):
-                raise EncodingError(
-                    f"Text at index {index} must be a string, got {type(text).__name__!s} instead."
-                )
+                raise EncodingError(f"Text at index {index} must be a string, got {type(text).__name__!s} instead.")
             if not text.strip():
                 raise EncodingError(f"Text at index {index} is empty or whitespace only.")
 
         # Determine whether caching is active for this call.
         use_cache = self.runtime_config.enable_cache and not self.runtime_config.convert_to_numpy
         if self.runtime_config.enable_cache and self.runtime_config.convert_to_numpy:
-            logger.debug(
-                "Embedding cache disabled because convert_to_numpy=True; "
-                "falling back to direct encoding."
-            )
+            logger.debug("Embedding cache disabled because convert_to_numpy=True; falling back to direct encoding.")
 
         # Split texts into cached and uncached sets while preserving indices so
         # results can be reassembled in the original order.
@@ -165,15 +157,20 @@ class Embedder(BaseModel):
                 per_text_vectors = list(vectors)
 
             for index, text, vector in zip(uncached_indices, uncached_texts, per_text_vectors):
-                embedding = Embedding(
-                    vector=vector,
-                    model_name=self.model_name,
-                    normalized=self.config.normalize_embeddings,
-                    text=text,
-                )
+                # Check if this text was already cached during this batch (e.g., duplicate texts).
+                # If so, reuse the existing Embedding object to maintain identity.
+                if use_cache and text in self._cache:
+                    embedding = self._cache[text]
+                else:
+                    embedding = Embedding(
+                        vector=vector,
+                        model_name=self.model_name,
+                        normalized=self.config.normalize_embeddings,
+                        text=text,
+                    )
+                    if use_cache:
+                        self._cache[text] = embedding
                 new_embeddings_by_index[index] = embedding
-                if use_cache:
-                    self._cache[text] = embedding
 
         # Reassemble embeddings in original input order using both cached and
         # newly encoded values.
@@ -184,112 +181,116 @@ class Embedder(BaseModel):
             else:
                 embeddings.append(new_embeddings_by_index[index])
 
-        dimensions = embeddings[0].dimensions if embeddings else 0
-
+        dimensions = self._model.get_sentence_embedding_dimension()
         return EmbeddingResult(
             embeddings=embeddings,
             model_name=self.model_name,
             dimensions=dimensions,
         )
+
     def clear_cache(self) -> None:
-        """Clear all cached embeddings for this embedder instance.
+        """Clear all cached embeddings.
 
-        The cache is maintained per :class:`Embedder` instance and keyed by the
-        original text string. This method removes all cached entries, forcing
-        subsequent :meth:`encode` calls to recompute embeddings.
+        Subsequent calls to :meth:`encode` will recompute embeddings from
+        scratch. This is useful for freeing memory or when embeddings may have
+        become stale (e.g., after updating the underlying model).
         """
-        if self._cache:
-            logger.debug("Clearing %d cached embeddings", len(self._cache))
         self._cache.clear()
-
 
     def similarity(
         self,
-        emb1: Embedding,
-        emb2: Embedding,
+        embedding_a: Embedding,
+        embedding_b: Embedding,
         metric: str = "cosine",
     ) -> SimilarityScore:
-        """Compute similarity between two embeddings.
+        """Compute the similarity between two embeddings.
+
+        The function supports cosine similarity (the default) and raw dot
+        product. When using the ``"cosine"`` metric, the vectors are normalised
+        before the dot product, which ensures a result in the range [-1, 1].
 
         Args:
-            emb1: First embedding.
-            emb2: Second embedding.
-            metric: Similarity metric to use, either ``"cosine"`` or ``"dot"``.
+            embedding_a: The first embedding to compare.
+            embedding_b: The second embedding to compare.
+            metric: Similarity metric to use. Accepts ``"cosine"`` or ``"dot"``.
 
         Returns:
-            A :class:`SimilarityScore` object describing the similarity.
+            A :class:`SimilarityScore` containing the computed similarity value
+            and the metric name.
 
         Raises:
-            ValidationError: If the embeddings have different dimensions or an
+            ValidationError: If the embeddings have different dimensions or if an
                 unsupported metric is requested.
         """
+        if embedding_a.dimensions != embedding_b.dimensions:
+            raise ValidationError(
+                f"Dimension mismatch: embedding_a has {embedding_a.dimensions} dimensions, "
+                f"but embedding_b has {embedding_b.dimensions} dimensions."
+            )
+
         metric_normalised = metric.lower()
         if metric_normalised not in {"cosine", "dot"}:
             raise ValidationError(
-                f"Unsupported similarity metric {metric!r}. "
-                "Supported metrics are 'cosine' and 'dot'."
+                f"Unsupported similarity metric {metric!r}. Supported metrics are 'cosine' and 'dot'."
             )
 
-        # Validate dimensionality before performing any computation.
-        vec1 = emb1.vector
-        vec2 = emb2.vector
+        # Convert to numpy arrays for efficient computation.
+        vec_a = (
+            embedding_a.vector
+            if isinstance(embedding_a.vector, np.ndarray)
+            else np.array(embedding_a.vector, dtype=float)
+        )
+        vec_b = (
+            embedding_b.vector
+            if isinstance(embedding_b.vector, np.ndarray)
+            else np.array(embedding_b.vector, dtype=float)
+        )
 
-        dim1 = int(vec1.shape[-1]) if isinstance(vec1, np.ndarray) else len(vec1)
-        dim2 = int(vec2.shape[-1]) if isinstance(vec2, np.ndarray) else len(vec2)
-
-        if dim1 != dim2:
-            raise ValidationError(f"Embedding dimension mismatch: {dim1} vs {dim2}")
-
-        arr1 = np.asarray(vec1, dtype=float)
-        arr2 = np.asarray(vec2, dtype=float)
-
-        if metric_normalised == "dot":
-            score_value = float(np.dot(arr1, arr2))
+        if metric_normalised == "cosine":
+            # Normalise both vectors before computing the dot product.
+            norm_a = np.linalg.norm(vec_a)
+            norm_b = np.linalg.norm(vec_b)
+            if norm_a == 0 or norm_b == 0:
+                score = 0.0
+            else:
+                score = float(np.dot(vec_a / norm_a, vec_b / norm_b))
         else:
-            # Cosine similarity: dot(a, b) / (||a|| * ||b||)
-            norm1 = float(np.linalg.norm(arr1))
-            norm2 = float(np.linalg.norm(arr2))
-            if norm1 == 0.0 or norm2 == 0.0:
-                raise ValidationError(
-                    "Cannot compute cosine similarity for zero-length embedding."
-                )
-            score_value = float(np.dot(arr1, arr2) / (norm1 * norm2))
+            # Raw dot product.
+            score = float(np.dot(vec_a, vec_b))
 
-        return SimilarityScore(score=score_value, metric=metric_normalised)
+        return SimilarityScore(score=score, metric=metric_normalised)
 
     def similarity_batch(
         self,
-        embs1: list[Embedding],
-        embs2: list[Embedding],
+        embeddings_a: list[Embedding],
+        embeddings_b: list[Embedding],
         metric: str = "cosine",
     ) -> list[SimilarityScore]:
         """Compute pairwise similarities between two lists of embeddings.
 
-        The two lists must have the same length; the *i*th result corresponds to
-        the similarity between ``embs1[i]`` and ``embs2[i]``.
+        For each index ``i``, compute the similarity between ``embeddings_a[i]``
+        and ``embeddings_b[i]``. This is more efficient than calling
+        :meth:`similarity` in a loop when many pairs need to be compared.
 
         Args:
-            embs1: First list of embeddings.
-            embs2: Second list of embeddings.
-            metric: Similarity metric to use, either ``"cosine"`` or ``"dot"``.
+            embeddings_a: First list of embeddings.
+            embeddings_b: Second list of embeddings, must be the same length as
+                ``embeddings_a``.
+            metric: Similarity metric to use; accepts ``"cosine"`` or ``"dot"``.
 
         Returns:
-            A list of :class:`SimilarityScore` instances, one per input pair.
+            A list of :class:`SimilarityScore` objects, one per pair.
 
         Raises:
-            ValidationError: If the input lists have different lengths, if the
-                embeddings in a pair have mismatched dimensions or if an
-                unsupported metric is requested.
+            ValidationError: If the two lists have different lengths.
         """
-        if len(embs1) != len(embs2):
+        if len(embeddings_a) != len(embeddings_b):
             raise ValidationError(
-                "similarity_batch inputs must have the same length; "
-                f"got {len(embs1)} and {len(embs2)}"
+                f"List length mismatch: embeddings_a has {len(embeddings_a)} items, "
+                f"but embeddings_b has {len(embeddings_b)} items."
             )
 
-        return [self.similarity(e1, e2, metric=metric) for e1, e2 in zip(embs1, embs2)]
-
-
+        return [self.similarity(emb_a, emb_b, metric=metric) for emb_a, emb_b in zip(embeddings_a, embeddings_b)]
 
     def search(
         self,
@@ -341,13 +342,9 @@ class Embedder(BaseModel):
 
         # Exactly one of corpus or corpus_embeddings must be provided.
         if corpus is None and corpus_embeddings is None:
-            raise ValidationError(
-                "Either 'corpus' or 'corpus_embeddings' must be provided for search."
-            )
+            raise ValidationError("Either 'corpus' or 'corpus_embeddings' must be provided for search.")
         if corpus is not None and corpus_embeddings is not None:
-            raise ValidationError(
-                "Only one of 'corpus' or 'corpus_embeddings' may be provided, not both."
-            )
+            raise ValidationError("Only one of 'corpus' or 'corpus_embeddings' may be provided, not both.")
 
         # Determine the effective corpus size and handle empty-corpus cases.
         if corpus is not None:
@@ -369,8 +366,7 @@ class Embedder(BaseModel):
         metric_normalised = score_function.lower()
         if metric_normalised not in {"cosine", "dot"}:
             raise ValidationError(
-                f"Unsupported similarity metric {score_function!r}. "
-                "Supported metrics are 'cosine' and 'dot'."
+                f"Unsupported similarity metric {score_function!r}. Supported metrics are 'cosine' and 'dot'."
             )
 
         # For search, both score functions behave like cosine: they use cosine
@@ -381,9 +377,7 @@ class Embedder(BaseModel):
         if top_k < 1:
             raise ValidationError(f"top_k must be at least 1; got {top_k}.")
         if corpus_size and top_k > corpus_size:
-            raise ValidationError(
-                f"top_k ({top_k}) cannot be greater than corpus size ({corpus_size})."
-            )
+            raise ValidationError(f"top_k ({top_k}) cannot be greater than corpus size ({corpus_size}).")
 
         try:
             query_result = self.encode(queries)
@@ -475,3 +469,4 @@ class Embedder(BaseModel):
         the filesystem path.
         """
         return Path(self.config.model_path).name
+

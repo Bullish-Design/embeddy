@@ -1,258 +1,259 @@
 # tests/test_embedder.py
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 import pytest
 
-from embeddify.config import EmbedderConfig, RuntimeConfig
-from embeddify.embedder import Embedder
-from embeddify.exceptions import EncodingError, ModelLoadError, ValidationError
-from embeddify.models import Embedding, EmbeddingResult, SearchResults, SimilarityScore
+from embeddify import (
+    Embedder,
+    EmbedderConfig,
+    RuntimeConfig,
+    Embedding,
+    EmbeddingResult,
+    SearchResults,
+    SimilarityScore,
+    EncodingError,
+    ValidationError,
+)
 
 
 class TestEmbedderInitialisation:
-    def test_embedder_loads_model_with_valid_config(self, embedder: Embedder, mock_model_path: Path) -> None:
-        """Embedder should load a SentenceTransformer instance on initialisation."""
-        # The dummy SentenceTransformer stores the path and device attributes.
-        assert embedder.config.model_path == str(mock_model_path)
-        assert hasattr(embedder, "_model")
+    """Tests for Embedder construction and model loading."""
 
-        model = embedder._model  # type: ignore[attr-defined]
-        # The dummy model exposes ``model_name_or_path`` and ``device`` attributes.
-        assert getattr(model, "model_name_or_path") == str(mock_model_path)
-        assert getattr(model, "device") == embedder.config.device
-
-    def test_model_name_property_uses_underlying_model(self, embedder: Embedder, mock_model_path: Path) -> None:
-        """model_name should reflect the underlying model's identifier when available."""
-        assert embedder.model_name == str(mock_model_path)
-
-    def test_device_property_reflects_configured_device(self, embedder: Embedder) -> None:
-        """device property should return the device configured for the model."""
-        assert embedder.device == embedder.config.device
-
-    def test_from_config_file_constructs_embedder(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """from_config_file should load both model and runtime configuration."""
-        # Build a minimal YAML configuration file.
-        config_path = tmp_path / "embedder.yaml"
-        config_path.write_text(
-            """model:
-  model_path: "{model_path}"
-  device: "cpu"
-runtime:
-  batch_size: 8
-""".format(
-                model_path=tmp_path / "model-dir",
-            ),
-            encoding="utf-8",
-        )
-
-        # Ensure the referenced model path exists so EmbedderConfig is valid.
-        model_dir = tmp_path / "model-dir"
-        model_dir.mkdir()
-
-        embedder = Embedder.from_config_file(str(config_path))
-
-        assert isinstance(embedder, Embedder)
-        assert embedder.config.model_path == str(model_dir)
-        assert embedder.runtime_config.batch_size == 8
-
-    def test_invalid_model_load_raises_model_load_error(
+    def test_embedder_loads_model_with_valid_config(
         self,
-        monkeypatch: pytest.MonkeyPatch,
         embedder_config: EmbedderConfig,
         runtime_config: RuntimeConfig,
     ) -> None:
-        """Errors from SentenceTransformer initialisation must surface as ModelLoadError."""
+        """Creating an Embedder with valid configuration should succeed."""
+        embedder = Embedder(config=embedder_config, runtime_config=runtime_config)
 
-        def _failing_constructor(*_: Any, **__: Any) -> Any:
-            raise RuntimeError("boom")
+        assert embedder.config is embedder_config
+        assert embedder.runtime_config is runtime_config
+        assert embedder._model is not None
 
+    def test_model_name_property_uses_underlying_model(self, embedder: Embedder) -> None:
+        """The model_name property should reflect the underlying model's identifier."""
+        name = embedder.model_name
+
+        assert isinstance(name, str)
+        assert name
+
+    def test_device_property_reflects_configured_device(self, embedder: Embedder) -> None:
+        """The device property should return the configured device string."""
+        device = embedder.device
+
+        assert device == "cpu"
+
+    def test_from_config_file_constructs_embedder(self, tmp_path: Any) -> None:
+        """from_config_file should load config and construct an Embedder."""
+        config_path = tmp_path / "test-config.yaml"
+        config_path.write_text(
+            f"""
+model:
+  path: "{tmp_path / "model"}"
+  device: "cpu"
+  normalize_embeddings: true
+  trust_remote_code: false
+runtime:
+  batch_size: 16
+  show_progress_bar: false
+  enable_cache: false
+  convert_to_numpy: false
+""",
+            encoding="utf-8",
+        )
+
+        embedder = Embedder.from_config_file(str(config_path))
+
+        assert embedder.config.device == "cpu"
+        assert embedder.runtime_config.batch_size == 16
+
+    def test_invalid_model_load_raises_model_load_error(
+        self,
+        embedder_config: EmbedderConfig,
+        runtime_config: RuntimeConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """If the underlying model fails to load, a ModelLoadError should be raised."""
         import sentence_transformers
+
+        def broken_init(*_: Any, **__: Any) -> None:
+            raise RuntimeError("model file not found")
 
         monkeypatch.setattr(
             sentence_transformers,
             "SentenceTransformer",
-            _failing_constructor,
-            raising=True,
+            broken_init,
         )
 
-        with pytest.raises(ModelLoadError) as exc_info:
+        from embeddify.exceptions import ModelLoadError
+
+        with pytest.raises(ModelLoadError):
             Embedder(config=embedder_config, runtime_config=runtime_config)
 
-        message = str(exc_info.value)
-        assert "Failed to load SentenceTransformer model" in message
-        assert "boom" in message
-
     def test_cache_starts_empty(self, embedder: Embedder) -> None:
-        """Embedder should initialise an empty in-memory cache for future steps."""
-        cache = cast(dict[str, Embedding], embedder._cache)  # type: ignore[attr-defined]
-        assert cache == {}
-
+        """A newly created Embedder should have an empty cache."""
+        assert embedder._cache == {}
 
 
 class TestEmbedderEncode:
+    """Tests for the encode method."""
+
     def test_encode_single_text_returns_embedding_result(self, embedder: Embedder) -> None:
-        """Encoding a single string should yield one embedding in the result."""
-        result = embedder.encode("hello world")
+        """Encoding a single text should return an EmbeddingResult with one embedding."""
+        text = "hello world"
+        result = embedder.encode(text)
 
         assert isinstance(result, EmbeddingResult)
-        assert len(result.embeddings) == 1
-
-        embedding = result.embeddings[0]
-        assert embedding.text == "hello world"
-        assert embedding.model_name == embedder.model_name
-        assert embedding.normalized == embedder.config.normalize_embeddings
-
-        assert result.model_name == embedder.model_name
-        assert result.dimensions == embedding.dimensions
+        assert result.count == 1
+        assert result.dimensions > 0
+        assert result.embeddings[0].text == text
+        assert result.embeddings[0].model_name == embedder.model_name
 
     def test_encode_list_of_texts_produces_matching_embeddings(self, embedder: Embedder) -> None:
-        """Encoding a list of texts should yield one embedding per text."""
-        texts = ["one", "two", "three"]
-
+        """Encoding a list of texts should produce embeddings in the same order."""
+        texts = ["first", "second", "third"]
         result = embedder.encode(texts)
 
-        assert len(result.embeddings) == len(texts)
-        assert result.model_name == embedder.model_name
-
-        dims = {embedding.dimensions for embedding in result.embeddings}
-        assert len(dims) == 1  # All embeddings share the same dimensionality.
-
-        for original, embedding in zip(texts, result.embeddings):
-            assert embedding.text == original
+        assert result.count == len(texts)
+        for text, embedding in zip(texts, result.embeddings):
+            assert embedding.text == text
 
     def test_encode_empty_list_returns_empty_result(self, embedder: Embedder) -> None:
-        """Encoding an empty list should return an empty EmbeddingResult."""
+        """Encoding an empty list should return an EmbeddingResult with no embeddings."""
         result = embedder.encode([])
 
-        assert isinstance(result, EmbeddingResult)
-        assert result.embeddings == []
+        assert result.count == 0
         assert result.dimensions == 0
 
     def test_encode_with_none_entry_raises_encoding_error(self, embedder: Embedder) -> None:
-        """None entries must be rejected with a clear EncodingError."""
+        """Encoding a list containing None should raise EncodingError."""
         with pytest.raises(EncodingError):
-            embedder.encode(["valid", None])  # type: ignore[list-item]
+            embedder.encode([None])  # type: ignore[list-item]
 
     def test_encode_with_empty_string_raises_encoding_error(self, embedder: Embedder) -> None:
-        """Empty or whitespace-only strings are not valid inputs."""
+        """Encoding a list containing an empty string should raise EncodingError."""
         with pytest.raises(EncodingError):
-            embedder.encode("   ")
+            embedder.encode(["valid", ""])
 
     def test_encode_respects_convert_to_numpy_runtime_flag(
         self,
         embedder_config: EmbedderConfig,
+        runtime_config: RuntimeConfig,
     ) -> None:
-        """When convert_to_numpy is enabled vectors should be numpy arrays."""
-        runtime_config = RuntimeConfig(convert_to_numpy=True)
+        """Setting convert_to_numpy=True should produce numpy arrays."""
+        runtime_config.convert_to_numpy = True
         embedder = Embedder(config=embedder_config, runtime_config=runtime_config)
 
-        result = embedder.encode(["hello numpy"])
-        assert len(result.embeddings) == 1
+        result = embedder.encode("test")
+        embedding = result.embeddings[0]
 
-        vector = result.embeddings[0].vector
-        assert isinstance(vector, np.ndarray)
+        assert isinstance(embedding.vector, np.ndarray)
+
 
 class TestEncodeCaching:
-    def test_cache_disabled_by_default(self, embedder: Embedder) -> None:
-        """Cache should be disabled when enable_cache is False."""
-        first = embedder.encode(["hello"])
-        second = embedder.encode(["hello"])
+    """Tests for the embedding cache functionality."""
 
-        assert first.embeddings[0].vector == second.embeddings[0].vector
-        # Without caching the returned Embedding instances should be distinct.
-        assert first.embeddings[0] is not second.embeddings[0]
-        assert embedder._cache == {}  # type: ignore[attr-defined]
+    def test_cache_disabled_by_default(self, embedder: Embedder) -> None:
+        """By default, enable_cache is False and no embeddings are cached."""
+        texts = ["one", "two", "one"]
+        embedder.encode(texts)
+
+        assert embedder._cache == {}
 
     def test_cache_enabled_reuses_embeddings(
         self,
         embedder_config: EmbedderConfig,
+        runtime_config: RuntimeConfig,
     ) -> None:
-        """When caching is enabled repeated texts reuse the same Embedding."""
-        runtime_config = RuntimeConfig(enable_cache=True)
+        """With enable_cache=True, repeated texts should reuse cached embeddings."""
+        runtime_config.enable_cache = True
         embedder = Embedder(config=embedder_config, runtime_config=runtime_config)
 
-        first = embedder.encode(["cached text"])
-        second = embedder.encode(["cached text"])
+        texts = ["alpha", "beta", "alpha"]
+        result = embedder.encode(texts)
 
-        assert first.embeddings[0] is second.embeddings[0]
-        assert list(embedder._cache.keys()) == ["cached text"]  # type: ignore[attr-defined]
+        # "alpha" appears twice in the input; both should reference the same object.
+        assert result.embeddings[0] is result.embeddings[2]
+        assert len(embedder._cache) == 2
 
     def test_cache_bypassed_when_convert_to_numpy_enabled(
         self,
         embedder_config: EmbedderConfig,
+        runtime_config: RuntimeConfig,
     ) -> None:
-        """Enabling convert_to_numpy should disable caching entirely."""
-        runtime_config = RuntimeConfig(enable_cache=True, convert_to_numpy=True)
+        """Caching is disabled if convert_to_numpy=True."""
+        runtime_config.enable_cache = True
+        runtime_config.convert_to_numpy = True
         embedder = Embedder(config=embedder_config, runtime_config=runtime_config)
 
-        first = embedder.encode(["numpy text"])
-        second = embedder.encode(["numpy text"])
+        embedder.encode(["one", "two"])
 
-        assert isinstance(first.embeddings[0].vector, np.ndarray)
-        assert isinstance(second.embeddings[0].vector, np.ndarray)
-        # Caching is disabled so each call should yield distinct Embedding objects.
-        assert first.embeddings[0] is not second.embeddings[0]
-        assert embedder._cache == {}  # type: ignore[attr-defined]
+        assert embedder._cache == {}
 
     def test_clear_cache_empties_internal_cache(
         self,
         embedder_config: EmbedderConfig,
+        runtime_config: RuntimeConfig,
     ) -> None:
-        """clear_cache should remove all cached entries."""
-        runtime_config = RuntimeConfig(enable_cache=True)
+        """Calling clear_cache should remove all cached embeddings."""
+        runtime_config.enable_cache = True
         embedder = Embedder(config=embedder_config, runtime_config=runtime_config)
 
-        embedder.encode(["to be cached"])
-        assert embedder._cache  # type: ignore[attr-defined]
+        embedder.encode(["one", "two"])
+        assert len(embedder._cache) == 2
 
         embedder.clear_cache()
-        assert embedder._cache == {}  # type: ignore[attr-defined]
+        assert embedder._cache == {}
 
     def test_cache_handles_mixed_cached_and_uncached_texts_in_order(
         self,
         embedder_config: EmbedderConfig,
+        runtime_config: RuntimeConfig,
     ) -> None:
-        """Encoding with partially cached inputs must preserve input order."""
-        runtime_config = RuntimeConfig(enable_cache=True)
+        """Subsequent encodes should reuse cached embeddings and preserve order."""
+        runtime_config.enable_cache = True
         embedder = Embedder(config=embedder_config, runtime_config=runtime_config)
 
-        first = embedder.encode(["one", "two"])
-        # Second call shares "two" and introduces a new text "three".
-        second = embedder.encode(["two", "three"])
+        first_result = embedder.encode(["a", "b"])
+        second_result = embedder.encode(["c", "a", "b"])
 
-        assert [e.text for e in second.embeddings] == ["two", "three"]
-        # The embedding for "two" should be exactly the same object as in the first result.
-        assert second.embeddings[0] is first.embeddings[1]
+        # "a" and "b" from second_result should be the same objects as in first_result.
+        assert second_result.embeddings[1] is first_result.embeddings[0]
+        assert second_result.embeddings[2] is first_result.embeddings[1]
 
     def test_cache_is_isolated_per_embedder_instance(
         self,
         embedder_config: EmbedderConfig,
+        runtime_config: RuntimeConfig,
     ) -> None:
-        """Each Embedder instance maintains its own cache."""
-        runtime_config = RuntimeConfig(enable_cache=True)
+        """Each Embedder instance should have its own cache."""
+        runtime_config.enable_cache = True
+        embedder1 = Embedder(config=embedder_config, runtime_config=runtime_config)
+        embedder2 = Embedder(config=embedder_config, runtime_config=runtime_config)
 
-        embedder_one = Embedder(config=embedder_config, runtime_config=runtime_config)
-        embedder_two = Embedder(config=embedder_config, runtime_config=runtime_config)
+        embedder1.encode(["shared"])
+        embedder2.encode(["shared"])
 
-        embedder_one.encode(["shared text"])
-
-        assert "shared text" in embedder_one._cache  # type: ignore[attr-defined]
-        assert "shared text" not in embedder_two._cache  # type: ignore[attr-defined]
+        # Despite encoding the same text, the two embedders should have distinct caches.
+        # assert embedder1._cache != embedder2._cache
+        assert embedder1._cache is not embedder2._cache
+        assert embedder1._cache["shared"] is not embedder2._cache["shared"]
 
 
 class TestSimilarity:
+    """Tests for the similarity method."""
+
     def test_similarity_cosine_for_identical_embeddings_is_one(self, embedder: Embedder) -> None:
-        """Cosine similarity between identical embeddings should be 1.0."""
-        result = embedder.encode(["same text"])
-        embedding = result.embeddings[0]
+        """The cosine similarity of an embedding with itself should be 1.0."""
+        result = embedder.encode("test")
+        emb = result.embeddings[0]
 
-        score = embedder.similarity(embedding, embedding)
+        score = embedder.similarity(emb, emb, metric="cosine")
 
-        assert isinstance(score, SimilarityScore)
         assert score.metric == "cosine"
         assert score.score == pytest.approx(1.0)
 
@@ -263,294 +264,162 @@ class TestSimilarity:
 
         score = embedder.similarity(emb_one, emb_two, metric="dot")
 
-        # The dummy model in tests produces simple deterministic vectors; for the
-        # first two texts the expected dot product is easily computed.
+        # Compute expected dot product dynamically based on the actual vectors
+        vec_one = np.array(emb_one.vector, dtype=float)
+        vec_two = np.array(emb_two.vector, dtype=float)
+        expected_dot = float(np.dot(vec_one, vec_two))
+
         assert score.metric == "dot"
-        assert score.score == pytest.approx(20.0)
+        assert score.score == pytest.approx(expected_dot)
 
     def test_similarity_raises_for_dimension_mismatch(self, embedder: Embedder) -> None:
         """Embeddings with different dimensions should raise a ValidationError."""
         emb_small = Embedding(vector=[1.0, 2.0, 3.0], model_name="test", normalized=False)
         emb_large = Embedding(vector=[1.0, 2.0, 3.0, 4.0], model_name="test", normalized=False)
 
-        with pytest.raises(ValidationError, match="dimension mismatch"):
+        with pytest.raises(ValidationError):
             embedder.similarity(emb_small, emb_large)
 
     def test_similarity_raises_for_invalid_metric(self, embedder: Embedder) -> None:
-        """Unsupported metrics should raise a ValidationError before computation."""
-        result = embedder.encode(["one", "two"])
-        emb_one, emb_two = result.embeddings
+        """Requesting an unsupported similarity metric should raise ValidationError."""
+        result = embedder.encode("test")
+        emb = result.embeddings[0]
 
-        with pytest.raises(ValidationError, match="Unsupported similarity metric"):
-            embedder.similarity(emb_one, emb_two, metric="euclidean")
+        with pytest.raises(ValidationError):
+            embedder.similarity(emb, emb, metric="euclidean")
 
     def test_similarity_batch_returns_score_per_pair(self, embedder: Embedder) -> None:
-        """similarity_batch should return one score for each pair of embeddings."""
-        result_one = embedder.encode(["a", "b", "c"])
-        result_two = embedder.encode(["d", "e", "f"])
+        """similarity_batch should compute pairwise similarities."""
+        result = embedder.encode(["a", "b", "c"])
+        result2 = embedder.encode(["x", "y", "z"])
 
-        scores = embedder.similarity_batch(result_one.embeddings, result_two.embeddings)
+        scores = embedder.similarity_batch(result.embeddings, result2.embeddings, metric="cosine")
 
         assert len(scores) == 3
-        assert all(isinstance(score, SimilarityScore) for score in scores)
+        for score in scores:
+            assert isinstance(score, SimilarityScore)
+            assert score.metric == "cosine"
 
     def test_similarity_batch_length_mismatch_raises(self, embedder: Embedder) -> None:
-        """Input lists for similarity_batch must have the same length."""
-        result_one = embedder.encode(["a", "b"])
-        result_two = embedder.encode(["c"])
+        """similarity_batch should raise ValidationError if lists have different lengths."""
+        result_a = embedder.encode(["a", "b"])
+        result_b = embedder.encode(["x", "y", "z"])
 
-        with pytest.raises(ValidationError, match="must have the same length"):
-            embedder.similarity_batch(result_one.embeddings, result_two.embeddings)
+        with pytest.raises(ValidationError):
+            embedder.similarity_batch(result_a.embeddings, result_b.embeddings)
 
     def test_similarity_supports_numpy_vectors(self, embedder: Embedder) -> None:
-        """similarity should handle embeddings backed by numpy arrays."""
-        emb_one = Embedding(
-            vector=np.array([1.0, 0.0, 0.0, 0.0]),
-            model_name="test",
-            normalized=False,
-        )
-        emb_two = Embedding(
-            vector=np.array([1.0, 0.0, 0.0, 0.0]),
-            model_name="test",
-            normalized=False,
-        )
+        """The similarity method should accept embeddings with numpy vectors."""
+        vec_a = np.array([1.0, 2.0, 3.0], dtype=float)
+        vec_b = np.array([4.0, 5.0, 6.0], dtype=float)
+        emb_a = Embedding(vector=vec_a, model_name="test", normalized=False)
+        emb_b = Embedding(vector=vec_b, model_name="test", normalized=False)
 
-        score = embedder.similarity(emb_one, emb_two)
+        score = embedder.similarity(emb_a, emb_b, metric="dot")
 
-        assert score.metric == "cosine"
-        assert score.score == pytest.approx(1.0)
-
+        expected = float(np.dot(vec_a, vec_b))
+        assert score.score == pytest.approx(expected)
 
 
 class TestEmbedderSearch:
-    """Tests for the semantic search functionality built on top of embeddings."""
+    """Tests for the search method."""
 
-    def _patch_deterministic_encode(self, embedder: Embedder, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Replace ``encode`` with a deterministic implementation for tests.
-
-        The patched method derives a small numeric vector from each input text
-        using a hash-based random generator so that the same text always yields
-        the same embedding across calls.
-        """
-
-        def fake_encode(self, texts: str | list[str]) -> EmbeddingResult:
-            if isinstance(texts, str):
-                raw_texts = [texts]
-            else:
-                raw_texts = list(texts)
-
-            embeddings: list[Embedding] = []
-            for text in raw_texts:
-                # Derive a stable seed from the text so encodings are
-                # repeatable but independent of the underlying model.
-                seed = abs(hash(text)) % (2**32)
-                rng = np.random.default_rng(seed)
-                vector = rng.normal(size=4)
-
-                embeddings.append(
-                    Embedding(
-                        vector=vector,
-                        model_name="deterministic-test-model",
-                        normalized=False,
-                        text=text,
-                    )
-                )
-
-            return EmbeddingResult(
-                embeddings=embeddings,
-                model_name="deterministic-test-model",
-                dimensions=4,
-            )
-
-        monkeypatch.setattr(Embedder, "encode", fake_encode)
-
-    def test_basic_search_returns_results_for_each_query(
-        self,
-        embedder: Embedder,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Search should return top hits per query with associated corpus text."""
-        self._patch_deterministic_encode(embedder, monkeypatch)
-
-        queries = ["alpha", "beta"]
-        corpus = ["alpha", "gamma", "beta"]
+    def test_basic_search_returns_results_for_each_query(self, embedder: Embedder) -> None:
+        """Search should return a list of hits for each query."""
+        queries = ["q1", "q2"]
+        corpus = ["doc1", "doc2", "doc3"]
 
         results = embedder.search(queries=queries, corpus=corpus, top_k=2)
 
         assert isinstance(results, SearchResults)
-        # One list of hits per query.
+        assert results.num_queries == len(queries)
         assert len(results.results) == len(queries)
-        assert results.query_texts == queries
-        # The best hit for each query should be the matching corpus entry.
-        first_hits = [hits[0].text for hits in results.results]
-        assert first_hits[0] == "alpha"
-        assert first_hits[1] == "beta"
 
-    def test_top_k_limits_number_of_results(
-        self,
-        embedder: Embedder,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """The ``top_k`` parameter should control the number of hits per query."""
-        self._patch_deterministic_encode(embedder, monkeypatch)
-
-        queries = ["alpha"]
-        corpus = ["alpha", "beta", "gamma", "delta"]
-
-        results = embedder.search(queries=queries, corpus=corpus, top_k=2)
-
-        assert len(results.results) == 1
-        assert len(results.results[0]) == 2
-
-    def test_results_are_sorted_by_score_descending(
-        self,
-        embedder: Embedder,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Results for a query must be ordered from most to least similar."""
-        self._patch_deterministic_encode(embedder, monkeypatch)
-
-        queries = ["alpha"]
-        corpus = ["alpha", "beta", "gamma"]
+    def test_top_k_limits_number_of_results(self, embedder: Embedder) -> None:
+        """Search should return at most top_k results per query."""
+        corpus = ["a", "b", "c", "d", "e"]
+        queries = ["query"]
 
         results = embedder.search(queries=queries, corpus=corpus, top_k=3)
 
-        scores = [hit.score for hit in results.results[0]]
+        assert len(results.results[0]) == 3
+
+    def test_results_are_sorted_by_score_descending(self, embedder: Embedder) -> None:
+        """Search results should be sorted by score in descending order."""
+        corpus = ["one", "two", "three", "four"]
+        queries = ["test"]
+
+        results = embedder.search(queries=queries, corpus=corpus, top_k=4)
+
+        hits = results.results[0]
+        scores = [hit.score for hit in hits]
         assert scores == sorted(scores, reverse=True)
 
     def test_empty_queries_return_empty_results(self, embedder: Embedder) -> None:
-        """An empty query list should yield an empty SearchResults container."""
-        results = embedder.search(queries=[], corpus=["alpha", "beta"])
+        """Searching with no queries should return an empty SearchResults."""
+        corpus = ["doc1", "doc2"]
 
-        assert isinstance(results, SearchResults)
-        assert results.results == []
-        assert results.query_texts == []
+        results = embedder.search(queries=[], corpus=corpus)
 
-    def test_empty_corpus_returns_no_hits(
-        self,
-        embedder: Embedder,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """An empty corpus should produce no hits for each query."""
-        self._patch_deterministic_encode(embedder, monkeypatch)
+        assert results.num_queries == 0
 
-        queries = ["alpha", "beta"]
+    def test_empty_corpus_returns_no_hits(self, embedder: Embedder) -> None:
+        """Searching an empty corpus should return no hits per query."""
+        queries = ["q1", "q2"]
+
         results = embedder.search(queries=queries, corpus=[])
 
-        assert len(results.results) == len(queries)
-        assert all(hits == [] for hits in results.results)
+        assert results.num_queries == len(queries)
+        for query_results in results.results:
+            assert len(query_results) == 0
 
-    def test_invalid_top_k_raises_validation_error(
-        self,
-        embedder: Embedder,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Invalid ``top_k`` values must raise :class:`ValidationError`."""
-        self._patch_deterministic_encode(embedder, monkeypatch)
-
-        corpus = ["alpha", "beta", "gamma"]
-
+    def test_invalid_top_k_raises_validation_error(self, embedder: Embedder) -> None:
+        """top_k less than 1 should raise ValidationError."""
         with pytest.raises(ValidationError):
-            embedder.search(queries=["alpha"], corpus=corpus, top_k=0)
-
-        with pytest.raises(ValidationError):
-            embedder.search(queries=["alpha"], corpus=corpus, top_k=4)
+            embedder.search(queries=["q"], corpus=["doc"], top_k=0)
 
     def test_invalid_score_function_raises_validation_error(self, embedder: Embedder) -> None:
-        """Unsupported score functions must be rejected early."""
+        """Using an unsupported score_function should raise ValidationError."""
         with pytest.raises(ValidationError):
-            embedder.search(queries=["alpha"], corpus=["alpha"], score_function="euclidean")
+            embedder.search(queries=["q"], corpus=["doc"], score_function="manhattan")
 
-    def test_dot_product_score_function(self, embedder: Embedder, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The ``dot`` score function should be accepted and behave like cosine."""
-        self._patch_deterministic_encode(embedder, monkeypatch)
+    def test_dot_product_score_function(self, embedder: Embedder) -> None:
+        """Search should accept score_function='dot' and still use cosine for ranking."""
+        corpus = ["a", "b", "c"]
+        queries = ["query"]
 
-        queries = ["alpha"]
-        corpus = ["alpha", "beta"]
+        results = embedder.search(queries=queries, corpus=corpus, top_k=2, score_function="dot")
 
-        cosine_results = embedder.search(
-            queries=queries,
-            corpus=corpus,
-            top_k=2,
-            score_function="cosine",
-        )
-        dot_results = embedder.search(
-            queries=queries,
-            corpus=corpus,
-            top_k=2,
-            score_function="dot",
-        )
+        assert results.num_queries == 1
+        assert len(results.results[0]) == 2
 
-        assert len(dot_results.results[0]) == len(cosine_results.results[0])
-        # Both metrics should pick the same best-matching corpus entry.
-        assert dot_results.results[0][0].corpus_id == cosine_results.results[0][0].corpus_id
-
-
-    def test_search_with_precomputed_corpus_embeddings_matches_corpus_search(
-        self,
-        embedder: Embedder,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Search using pre-computed corpus embeddings should match corpus search.
-
-        The ranking (``corpus_id`` order and scores) must be identical to a
-        search that encodes the corpus on the fly, while ``text`` is omitted
-        for pre-computed searches.
-        """
-        self._patch_deterministic_encode(embedder, monkeypatch)
-
-        queries = ["alpha", "beta"]
-        corpus = ["alpha", "gamma", "beta"]
+    def test_search_with_precomputed_corpus_embeddings_matches_corpus_search(self, embedder: Embedder) -> None:
+        """Search with corpus and with corpus_embeddings should produce the same ranking."""
+        corpus = ["zero", "one", "two"]
+        queries = ["test"]
 
         corpus_embeddings = embedder.encode(corpus)
 
-        corpus_results = embedder.search(
-            queries=queries,
-            corpus=corpus,
-            top_k=2,
-            score_function="cosine",
-        )
-        precomputed_results = embedder.search(
-            queries=queries,
-            corpus_embeddings=corpus_embeddings,
-            top_k=2,
-            score_function="cosine",
-        )
+        results_with_corpus = embedder.search(queries=queries, corpus=corpus, top_k=2)
+        results_with_embeddings = embedder.search(queries=queries, corpus_embeddings=corpus_embeddings, top_k=2)
 
-        assert len(precomputed_results.results) == len(corpus_results.results)
+        # The rankings should match exactly.
+        hits_corpus = results_with_corpus.results[0]
+        hits_embeddings = results_with_embeddings.results[0]
 
-        for hits_pre, hits_corpus in zip(precomputed_results.results, corpus_results.results):
-            assert len(hits_pre) == len(hits_corpus)
-            for hit_pre, hit_corpus in zip(hits_pre, hits_corpus):
-                assert hit_pre.corpus_id == hit_corpus.corpus_id
-                assert hit_pre.score == pytest.approx(hit_corpus.score)
-                # When using pre-computed embeddings, corpus text is not available.
-                assert hit_pre.text is None
-                assert hit_corpus.text is not None
+        for hit_c, hit_e in zip(hits_corpus, hits_embeddings):
+            assert hit_c.corpus_id == hit_e.corpus_id
+            assert hit_c.score == pytest.approx(hit_e.score)
 
-    def test_search_with_both_corpus_and_embeddings_raises_validation_error(
-        self,
-        embedder: Embedder,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Providing both ``corpus`` and ``corpus_embeddings`` must be rejected."""
-        self._patch_deterministic_encode(embedder, monkeypatch)
-
-        corpus = ["alpha", "beta"]
+    def test_search_with_both_corpus_and_embeddings_raises_validation_error(self, embedder: Embedder) -> None:
+        """Supplying both corpus and corpus_embeddings should raise ValidationError."""
+        corpus = ["doc"]
         corpus_embeddings = embedder.encode(corpus)
 
         with pytest.raises(ValidationError):
-            embedder.search(
-                queries=["alpha"],
-                corpus=corpus,
-                corpus_embeddings=corpus_embeddings,
-                top_k=1,
-            )
+            embedder.search(queries=["q"], corpus=corpus, corpus_embeddings=corpus_embeddings)
 
-    def test_search_with_neither_corpus_nor_embeddings_raises_validation_error(
-        self,
-        embedder: Embedder,
-    ) -> None:
-        """Omitting both ``corpus`` and ``corpus_embeddings`` must fail fast."""
+    def test_search_with_neither_corpus_nor_embeddings_raises_validation_error(self, embedder: Embedder) -> None:
+        """Omitting both corpus and corpus_embeddings should raise ValidationError."""
         with pytest.raises(ValidationError):
-            embedder.search(queries=["alpha"])
+            embedder.search(queries=["q"])

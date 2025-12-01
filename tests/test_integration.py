@@ -266,5 +266,6 @@ class TestErrorHandlingIntegration:
         # since Embedder is a Pydantic BaseModel that doesn't allow arbitrary attributes.
         monkeypatch.setattr(embedder._model, "encode", failing_encode)  # type: ignore[attr-defined]
 
+        # Pass top_k=1 to avoid validation error before encoding is attempted
         with pytest.raises(SearchError):
-            embedder.search(queries=["query"], corpus=["document"])
+            embedder.search(queries=["query"], corpus=["document"], top_k=1)
