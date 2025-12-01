@@ -120,7 +120,7 @@ class EmbeddingResult(BaseModel):
     dimensions: int = Field(description="Dimensionality of every embedding vector")
 
     @model_validator(mode="after")
-    def validate_dimensions(self) -> "EmbeddingResult":
+    def validate_dimensions(self) -> EmbeddingResult:
         """Ensure all embeddings share the same dimensionality as `dimensions`."""
         if not self.embeddings:
             return self
@@ -131,8 +131,7 @@ class EmbeddingResult(BaseModel):
             emb_dim = embedding.dimensions
             if emb_dim != self.dimensions:
                 raise ValueError(
-                    f"Inconsistent embedding dimensions at index {index}: "
-                    f"expected {self.dimensions}, got {emb_dim}"
+                    f"Inconsistent embedding dimensions at index {index}: expected {self.dimensions}, got {emb_dim}"
                 )
         return self
 
@@ -179,7 +178,7 @@ class SearchResults(BaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_sorted_results(self) -> "SearchResults":
+    def validate_sorted_results(self) -> SearchResults:
         """Ensure that each query's results are sorted by score descending."""
         for query_index, query_results in enumerate(self.results):
             if len(query_results) < 2:
@@ -187,8 +186,7 @@ class SearchResults(BaseModel):
             scores = [hit.score for hit in query_results]
             if scores != sorted(scores, reverse=True):
                 raise ValueError(
-                    f"Search results for query index {query_index} must be sorted "
-                    f"by score in descending order"
+                    f"Search results for query index {query_index} must be sorted by score in descending order"
                 )
         return self
 

@@ -1,13 +1,9 @@
 # README.md
-# Embeddify
-
-[![PyPI version](https://badge.fury.io/py/embeddify.svg)](https://badge.fury.io/py/embeddify)
-[![Python versions](https://img.shields.io/pypi/pyversions/embeddify.svg)](https://pypi.org/project/embeddify/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+# Embeddy
 
 A Pydantic-based wrapper for Sentence Transformers that simplifies embedding generation and semantic search.
 
-Embeddify provides a type-safe, configuration-driven interface to the Sentence Transformers library, eliminating 
+Embeddy provides a type-safe, configuration-driven interface to the Sentence Transformers library, eliminating 
 boilerplate code while adding comprehensive validation. Built for production RAG systems, semantic search engines, 
 and embedding-based applications.
 
@@ -15,30 +11,30 @@ and embedding-based applications.
 
 ### Using UV (Recommended)
 ```bash
-uv add embeddify
+uv add embeddy
 ```
 
 ### Using pip
 ```bash
-pip install embeddify
+pip install embeddy
 ```
 
 ### Development Installation
 ```bash
-git clone https://github.com/user/embeddify.git
-cd embeddify
+git clone https://github.com/Bullish-Design/embeddy.git
+cd embeddy
 uv sync
 ```
 
 ### System Requirements
-- Python 3.10+
+- Python 3.13+
 - Pre-downloaded Sentence Transformer models (library does not auto-download)
 - CUDA-compatible GPU (optional, for acceleration)
 
 ## Quick Start
 
 ```python
-from embeddify import Embedder, EmbedderConfig
+from embeddy import Embedder, EmbedderConfig
 
 # Configure the embedder
 config = EmbedderConfig(
@@ -83,7 +79,7 @@ content. Maintains type safety through the entire search pipeline.
 
 ### Design Philosophy
 
-Embeddify follows these core principles:
+embeddy follows these core principles:
 
 - **Explicit over implicit**: All configuration declared via Pydantic models, no hidden state
 - **Fail fast**: Validation at configuration time prevents runtime surprises
@@ -98,7 +94,7 @@ Embeddify follows these core principles:
 #### Encoding Text
 
 ```python
-from embeddify import Embedder, EmbedderConfig
+from embeddy import Embedder, EmbedderConfig
 
 # Initialize embedder
 config = EmbedderConfig(model_path="/models/all-MiniLM-L6-v2")
@@ -123,7 +119,7 @@ embedder = Embedder.from_config_file("embedantic_config.yaml")
 
 # Or use environment variable
 import os
-os.environ["EMBEDDIFY_CONFIG_PATH"] = "/path/to/config.yaml"
+os.environ["EMBEDDY_CONFIG_PATH"] = "/path/to/config.yaml"
 embedder = Embedder.from_config_file()
 ```
 
@@ -198,7 +194,7 @@ results = embedder.search(
 #### Batch Processing with Progress
 
 ```python
-from embeddify import RuntimeConfig
+from embeddy import RuntimeConfig
 
 # Configure runtime behavior
 runtime_config = RuntimeConfig(
@@ -222,19 +218,19 @@ result = embedder.encode(large_dataset)
 
 ```bash
 # Override model path
-export EMBEDDIFY_MODEL_PATH="/models/custom-model"
+export EMBEDDY_MODEL_PATH="/models/custom-model"
 
 # Override device
-export EMBEDDIFY_DEVICE="cuda"
+export EMBEDDY_DEVICE="cuda"
 
 # Config file location
-export EMBEDDIFY_CONFIG_PATH="/etc/embeddify/config.yaml"
+export EMBEDDY_CONFIG_PATH="/etc/embeddy/config.yaml"
 ```
 
 #### Runtime Configuration Options
 
 ```python
-from embeddify import RuntimeConfig
+from embeddy import RuntimeConfig
 
 runtime = RuntimeConfig(
     batch_size=32,              # Encoding batch size
@@ -247,8 +243,8 @@ runtime = RuntimeConfig(
 ### Error Handling
 
 ```python
-from embeddify.exceptions import (
-    EmbeddifyError,
+from embeddy.exceptions import (
+    EmbeddyError,
     ModelLoadError,
     EncodingError,
     ValidationError
@@ -372,7 +368,7 @@ results = embedder.search(
 Class method to load embedder from YAML/JSON config file.
 
 **Parameters:**
-- `path`: Config file path. If None, reads from `EMBEDDIFY_CONFIG_PATH` environment variable
+- `path`: Config file path. If None, reads from `EMBEDDY_CONFIG_PATH` environment variable
 
 **Returns:** Configured `Embedder` instance
 
@@ -444,7 +440,7 @@ Load and parse YAML/JSON configuration file.
 
 **Example:**
 ```python
-from embeddify.config import load_config_file
+from embeddy.config import load_config_file
 config_dict = load_config_file("config.yaml")
 ```
 
@@ -452,7 +448,7 @@ config_dict = load_config_file("config.yaml")
 
 ### Overview
 
-Embeddify uses a layered architecture separating concerns between configuration, execution, and results:
+Embeddy uses a layered architecture separating concerns between configuration, execution, and results:
 
 ```
 ┌─────────────────────────────────────────┐
@@ -526,7 +522,7 @@ results = embedder.search(
 
 **Custom Validators:**
 ```python
-from embeddify import EmbedderConfig
+from embeddy import EmbedderConfig
 from pydantic import field_validator
 
 class CustomConfig(EmbedderConfig):
@@ -571,7 +567,7 @@ The design supports future plugin systems for:
 ### Use Case 1: Building a FAQ Search System
 
 ```python
-from embeddify import Embedder, EmbedderConfig
+from embeddy import Embedder, EmbedderConfig
 
 # Initialize embedder
 config = EmbedderConfig(
@@ -620,7 +616,7 @@ for hit in results.results[0]:
 ### Use Case 2: Document Similarity and Deduplication
 
 ```python
-from embeddify import Embedder, EmbedderConfig, RuntimeConfig
+from embeddy import Embedder, EmbedderConfig, RuntimeConfig
 
 # Configure for batch processing
 config = EmbedderConfig(model_path="/models/all-MiniLM-L6-v2")
@@ -654,7 +650,7 @@ for idx1, idx2, score in duplicates[:5]:
 ### Use Case 3: Multi-Language Semantic Search
 
 ```python
-from embeddify import Embedder, EmbedderConfig
+from embeddy import Embedder, EmbedderConfig
 
 # Use multilingual model
 config = EmbedderConfig(
@@ -686,7 +682,7 @@ for hit in results.results[0]:
 ### Use Case 4: RAG Pipeline Integration
 
 ```python
-from embeddify import Embedder, EmbedderConfig
+from embeddy import Embedder, EmbedderConfig
 import json
 
 # Initialize embedder with caching
@@ -730,14 +726,14 @@ prompt += f"\n\nQuestion: {user_query}\nAnswer:"
 ```python
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from embeddify import Embedder, EmbedderConfig
+from embeddy import Embedder, EmbedderConfig
 import os
 
 app = FastAPI()
 
 # Initialize embedder on startup
 embedder = Embedder.from_config_file(
-    os.getenv("EMBEDDIFY_CONFIG_PATH")
+    os.getenv("EMBEDDY_CONFIG_PATH")
 )
 
 class SearchRequest(BaseModel):
@@ -779,8 +775,8 @@ async def semantic_search(request: SearchRequest):
 ### Project Structure
 
 ```
-embeddify/
-├── src/embeddify/
+embeddy/
+├── src/embeddy/
 │   ├── __init__.py
 │   ├── config.py              # EmbedderConfig, RuntimeConfig
 │   ├── embedder.py            # Main Embedder class
@@ -808,7 +804,7 @@ embeddify/
 uv run pytest
 
 # Run with coverage
-uv run pytest --cov=embeddify --cov-report=html
+uv run pytest --cov=embeddy --cov-report=html
 
 # Run specific test file
 uv run pytest tests/test_embedder.py
@@ -827,7 +823,7 @@ uv run ruff check src/ tests/
 uv run ruff format src/ tests/
 
 # Type checking
-uv run mypy src/embeddify/
+uv run mypy src/embeddy/
 
 # Run all checks
 uv run ruff check && uv run ruff format --check && uv run mypy src/
@@ -837,8 +833,8 @@ uv run ruff check && uv run ruff format --check && uv run mypy src/
 
 ```bash
 # Clone repository
-git clone https://github.com/user/embeddify.git
-cd embeddify
+git clone https://github.com/Bullish-Design/embeddy.git
+cd embeddy
 
 # Install with dev dependencies
 uv sync --all-extras

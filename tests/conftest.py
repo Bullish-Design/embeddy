@@ -51,6 +51,7 @@ def _install_dummy_sentence_transformers() -> Generator[None, None, None]:
                 self.model_name_or_path = model_name_or_path
                 self.device = device or "cpu"
                 self.trust_remote_code = bool(trust_remote_code)
+
             def encode(
                 self,
                 sentences,
@@ -62,8 +63,9 @@ def _install_dummy_sentence_transformers() -> Generator[None, None, None]:
             ):
                 """Return simple deterministic vectors for the provided sentences.
 
-                The exact numeric values are unimportant; tests assert on shape and
-                basic properties rather than specific magnitudes.
+                The vectors are generated based on text content (via hash) rather
+                than batch position, ensuring identical texts always produce
+                identical embeddings regardless of where they appear in the batch.
                 """
                 if isinstance(sentences, str):
                     texts = [sentences]
@@ -72,8 +74,11 @@ def _install_dummy_sentence_transformers() -> Generator[None, None, None]:
 
                 vectors: list[object] = []
                 dim = self.get_sentence_embedding_dimension()
-                for index, _text in enumerate(texts):
-                    base = float(index)
+                for text in texts:
+                    # Use hash of text to generate a consistent seed per unique text
+                    text_hash = hash(text)
+                    # Generate deterministic values based on the text content
+                    base = float(abs(text_hash) % 100)
                     data = [base + float(i) for i in range(dim)]
                     if convert_to_numpy:
                         vectors.append(np.array(data, dtype=float))
