@@ -5,7 +5,7 @@ A Pydantic-based wrapper for Sentence Transformers that simplifies embedding gen
 
 Embeddy provides a type-safe, configuration-driven interface to the Sentence Transformers library, eliminating 
 boilerplate code while adding comprehensive validation. Built for production RAG systems, semantic search engines, 
-and embedding-based applications.
+and embedding-based applications. Utilizes locally downloaded models, or pulls them from HuggingFace.
 
 ## Installation
 
