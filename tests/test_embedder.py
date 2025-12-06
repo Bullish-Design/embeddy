@@ -423,3 +423,4 @@ class TestEmbedderSearch:
         """Omitting both corpus and corpus_embeddings should raise ValidationError."""
         with pytest.raises(ValidationError):
             embedder.search(queries=["q"])
+

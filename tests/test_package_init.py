@@ -92,3 +92,4 @@ class TestPublicAPI:
         # we decide to expand the public API in the future.
         missing: set[str] = expected_names - public_names
         assert not missing, f"Missing names from embeddify.__all__: {sorted(missing)}"
+

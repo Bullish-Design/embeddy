@@ -269,3 +269,4 @@ class TestErrorHandlingIntegration:
         # Pass top_k=1 to avoid validation error before encoding is attempted
         with pytest.raises(SearchError):
             embedder.search(queries=["query"], corpus=["document"], top_k=1)
+

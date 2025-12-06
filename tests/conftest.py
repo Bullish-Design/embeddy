@@ -120,3 +120,4 @@ def runtime_config() -> RuntimeConfig:
 def embedder(embedder_config: EmbedderConfig, runtime_config: RuntimeConfig) -> Embedder:
     """Return an initialised :class:`Embedder` using the dummy model."""
     return Embedder(config=embedder_config, runtime_config=runtime_config)
+

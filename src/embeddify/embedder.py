@@ -469,4 +469,3 @@ class Embedder(BaseModel):
         the filesystem path.
         """
         return Path(self.config.model_path).name
-
