@@ -6,7 +6,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from embeddify import (
+from embeddy import (
     Embedder,
     EmbedderConfig,
     RuntimeConfig,
@@ -89,7 +89,7 @@ runtime:
             broken_init,
         )
 
-        from embeddify.exceptions import ModelLoadError
+        from embeddy.exceptions import ModelLoadError
 
         with pytest.raises(ModelLoadError):
             Embedder(config=embedder_config, runtime_config=runtime_config)

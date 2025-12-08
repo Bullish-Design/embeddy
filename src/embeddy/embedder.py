@@ -1,4 +1,4 @@
-# src/embeddify/embedder.py
+# src/embeddy/embedder.py
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,9 +8,9 @@ import logging
 import numpy as np
 from pydantic import BaseModel, Field, PrivateAttr
 
-from embeddify.config import EmbedderConfig, RuntimeConfig, load_config_file
-from embeddify.exceptions import EncodingError, ModelLoadError, SearchError, ValidationError
-from embeddify.models import Embedding, EmbeddingResult, SearchResult, SearchResults, SimilarityScore
+from embeddy.config import EmbedderConfig, RuntimeConfig, load_config_file
+from embeddy.exceptions import EncodingError, ModelLoadError, SearchError, ValidationError
+from embeddy.models import Embedding, EmbeddingResult, SearchResult, SearchResults, SimilarityScore
 
 logger = logging.getLogger(__name__)
 

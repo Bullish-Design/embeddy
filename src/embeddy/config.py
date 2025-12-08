@@ -1,4 +1,4 @@
-# src/embeddify/config.py
+# src/embeddy/config.py
 from __future__ import annotations
 
 import os
@@ -11,7 +11,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from embeddify.exceptions import ValidationError as EmbeddifyValidationError
+from embeddy.exceptions import ValidationError as EmbeddyValidationError
 
 
 _BOOL_TRUE_VALUES: set[str] = {"1", "true", "yes", "on"}
@@ -97,7 +97,7 @@ class EmbedderConfig(BaseModel):
 
         Values are parsed case-insensitively using a small set of common
         representations. If the value cannot be interpreted as a boolean,
-        an Embeddify :class:`ValidationError` is raised.
+        an Embeddy :class:`ValidationError` is raised.
         """
         lowered = raw.strip().lower()
         if lowered in _BOOL_TRUE_VALUES:
@@ -105,7 +105,7 @@ class EmbedderConfig(BaseModel):
         if lowered in _BOOL_FALSE_VALUES:
             return False
 
-        raise EmbeddifyValidationError(
+        raise EmbeddyValidationError(
             f"Invalid boolean value {raw!r} for environment variable {env_name}."
         )
 
@@ -114,33 +114,33 @@ class EmbedderConfig(BaseModel):
         """Construct configuration from environment variables.
 
         Environment variables:
-            EMBEDDIFY_MODEL_PATH (required)
-            EMBEDDIFY_DEVICE (optional, defaults to "cpu")
-            EMBEDDIFY_NORMALIZE_EMBEDDINGS (optional, defaults to "true")
-            EMBEDDIFY_TRUST_REMOTE_CODE (optional, defaults to "false")
+            EMBEDDY_MODEL_PATH (required)
+            EMBEDDY_DEVICE (optional, defaults to "cpu")
+            EMBEDDY_NORMALIZE_EMBEDDINGS (optional, defaults to "true")
+            EMBEDDY_TRUST_REMOTE_CODE (optional, defaults to "false")
 
         Returns:
             A validated :class:`EmbedderConfig` instance.
 
         Raises:
-            EmbeddifyValidationError: If required variables are missing or
+            EmbeddyValidationError: If required variables are missing or
                 contain invalid values.
         """
-        model_path = os.getenv("EMBEDDIFY_MODEL_PATH")
+        model_path = os.getenv("EMBEDDY_MODEL_PATH")
         if model_path is None or not model_path.strip():
-            raise EmbeddifyValidationError(
-                "EMBEDDIFY_MODEL_PATH must be set to use EmbedderConfig.from_env()."
+            raise EmbeddyValidationError(
+                "EMBEDDY_MODEL_PATH must be set to use EmbedderConfig.from_env()."
             )
 
-        device = os.getenv("EMBEDDIFY_DEVICE", "cpu")
+        device = os.getenv("EMBEDDY_DEVICE", "cpu")
 
-        normalize_raw = os.getenv("EMBEDDIFY_NORMALIZE_EMBEDDINGS", "true")
-        trust_raw = os.getenv("EMBEDDIFY_TRUST_REMOTE_CODE", "false")
+        normalize_raw = os.getenv("EMBEDDY_NORMALIZE_EMBEDDINGS", "true")
+        trust_raw = os.getenv("EMBEDDY_TRUST_REMOTE_CODE", "false")
 
         normalize = cls._parse_bool_env(
-            normalize_raw, "EMBEDDIFY_NORMALIZE_EMBEDDINGS"
+            normalize_raw, "EMBEDDY_NORMALIZE_EMBEDDINGS"
         )
-        trust_remote = cls._parse_bool_env(trust_raw, "EMBEDDIFY_TRUST_REMOTE_CODE")
+        trust_remote = cls._parse_bool_env(trust_raw, "EMBEDDY_TRUST_REMOTE_CODE")
 
         try:
             return cls(
@@ -151,7 +151,7 @@ class EmbedderConfig(BaseModel):
             )
         except Exception as exc:
             # Wrap any underlying Pydantic validation error with a domain-level error.
-            raise EmbeddifyValidationError(
+            raise EmbeddyValidationError(
                 f"Invalid Embedder configuration from environment: {exc}"
             ) from exc
 
@@ -204,20 +204,20 @@ class RuntimeConfig(BaseModel):
         """Construct runtime configuration from environment variables.
 
         Environment variables:
-            EMBEDDIFY_BATCH_SIZE (optional)
-            EMBEDDIFY_SHOW_PROGRESS_BAR (optional boolean)
-            EMBEDDIFY_ENABLE_CACHE (optional boolean)
-            EMBEDDIFY_CONVERT_TO_NUMPY (optional boolean)
+            EMBEDDY_BATCH_SIZE (optional)
+            EMBEDDY_SHOW_PROGRESS_BAR (optional boolean)
+            EMBEDDY_ENABLE_CACHE (optional boolean)
+            EMBEDDY_CONVERT_TO_NUMPY (optional boolean)
         """
         kwargs: dict[str, Any] = {}
 
-        batch_raw = os.getenv("EMBEDDIFY_BATCH_SIZE")
+        batch_raw = os.getenv("EMBEDDY_BATCH_SIZE")
         if batch_raw is not None:
             try:
                 kwargs["batch_size"] = int(batch_raw)
             except ValueError as exc:  # pragma: no cover - edge parsing path
-                raise EmbeddifyValidationError(
-                    f"Invalid integer value {batch_raw!r} for EMBEDDIFY_BATCH_SIZE."
+                raise EmbeddyValidationError(
+                    f"Invalid integer value {batch_raw!r} for EMBEDDY_BATCH_SIZE."
                 ) from exc
 
         def _apply_bool(raw: str | None, env_name: str, key: str) -> None:
@@ -226,25 +226,25 @@ class RuntimeConfig(BaseModel):
             kwargs[key] = EmbedderConfig._parse_bool_env(raw, env_name)
 
         _apply_bool(
-            os.getenv("EMBEDDIFY_SHOW_PROGRESS_BAR"),
-            "EMBEDDIFY_SHOW_PROGRESS_BAR",
+            os.getenv("EMBEDDY_SHOW_PROGRESS_BAR"),
+            "EMBEDDY_SHOW_PROGRESS_BAR",
             "show_progress_bar",
         )
         _apply_bool(
-            os.getenv("EMBEDDIFY_ENABLE_CACHE"),
-            "EMBEDDIFY_ENABLE_CACHE",
+            os.getenv("EMBEDDY_ENABLE_CACHE"),
+            "EMBEDDY_ENABLE_CACHE",
             "enable_cache",
         )
         _apply_bool(
-            os.getenv("EMBEDDIFY_CONVERT_TO_NUMPY"),
-            "EMBEDDIFY_CONVERT_TO_NUMPY",
+            os.getenv("EMBEDDY_CONVERT_TO_NUMPY"),
+            "EMBEDDY_CONVERT_TO_NUMPY",
             "convert_to_numpy",
         )
 
         try:
             return cls(**kwargs)
         except Exception as exc:
-            raise EmbeddifyValidationError(
+            raise EmbeddyValidationError(
                 f"Invalid Runtime configuration from environment: {exc}"
             ) from exc
 
@@ -259,7 +259,7 @@ def load_config_file(path: str | None = None) -> tuple[EmbedderConfig, RuntimeCo
 
     Args:
         path: Optional path to the configuration file. When ``None``, the
-            function falls back to the ``EMBEDDIFY_CONFIG_PATH`` environment
+            function falls back to the ``EMBEDDY_CONFIG_PATH`` environment
             variable.
 
     Returns:
@@ -267,13 +267,13 @@ def load_config_file(path: str | None = None) -> tuple[EmbedderConfig, RuntimeCo
 
     Raises:
         FileNotFoundError: If the configuration file does not exist.
-        EmbeddifyValidationError: If the configuration cannot be parsed or
+        EmbeddyValidationError: If the configuration cannot be parsed or
             has an unexpected structure.
     """
-    config_path_str = path or os.getenv("EMBEDDIFY_CONFIG_PATH")
+    config_path_str = path or os.getenv("EMBEDDY_CONFIG_PATH")
     if not config_path_str:
-        raise EmbeddifyValidationError(
-            "No configuration path provided and EMBEDDIFY_CONFIG_PATH is not set."
+        raise EmbeddyValidationError(
+            "No configuration path provided and EMBEDDY_CONFIG_PATH is not set."
         )
 
     config_path = Path(config_path_str)
@@ -290,12 +290,12 @@ def load_config_file(path: str | None = None) -> tuple[EmbedderConfig, RuntimeCo
             # config-file behaviour but still validates structure below.
             loaded = yaml.safe_load(config_path.read_text())
     except Exception as exc:  # pragma: no cover - parser specific failures
-        raise EmbeddifyValidationError(
+        raise EmbeddyValidationError(
             f"Failed to parse configuration file {config_path}: {exc}"
         ) from exc
 
     if not isinstance(loaded, dict):
-        raise EmbeddifyValidationError(
+        raise EmbeddyValidationError(
             "Configuration file must contain a mapping at the top level."
         )
 
@@ -303,7 +303,7 @@ def load_config_file(path: str | None = None) -> tuple[EmbedderConfig, RuntimeCo
     runtime_section = loaded.get("runtime", {})
 
     if not isinstance(model_section, dict) or not isinstance(runtime_section, dict):
-        raise EmbeddifyValidationError(
+        raise EmbeddyValidationError(
             "Configuration sections 'model' and 'runtime' must be mappings."
         )
 
@@ -327,34 +327,34 @@ def load_config_file(path: str | None = None) -> tuple[EmbedderConfig, RuntimeCo
             runtime_kwargs[key] = runtime_section[key]
 
     # Apply environment overrides for model configuration.
-    env_model_path = os.getenv("EMBEDDIFY_MODEL_PATH")
+    env_model_path = os.getenv("EMBEDDY_MODEL_PATH")
     if env_model_path is not None:
         model_kwargs["model_path"] = env_model_path
 
-    env_device = os.getenv("EMBEDDIFY_DEVICE")
+    env_device = os.getenv("EMBEDDY_DEVICE")
     if env_device is not None:
         model_kwargs["device"] = env_device
 
-    env_normalize = os.getenv("EMBEDDIFY_NORMALIZE_EMBEDDINGS")
+    env_normalize = os.getenv("EMBEDDY_NORMALIZE_EMBEDDINGS")
     if env_normalize is not None:
         model_kwargs["normalize_embeddings"] = EmbedderConfig._parse_bool_env(
-            env_normalize, "EMBEDDIFY_NORMALIZE_EMBEDDINGS"
+            env_normalize, "EMBEDDY_NORMALIZE_EMBEDDINGS"
         )
 
-    env_trust = os.getenv("EMBEDDIFY_TRUST_REMOTE_CODE")
+    env_trust = os.getenv("EMBEDDY_TRUST_REMOTE_CODE")
     if env_trust is not None:
         model_kwargs["trust_remote_code"] = EmbedderConfig._parse_bool_env(
-            env_trust, "EMBEDDIFY_TRUST_REMOTE_CODE"
+            env_trust, "EMBEDDY_TRUST_REMOTE_CODE"
         )
 
     # Apply environment overrides for runtime configuration.
-    env_batch = os.getenv("EMBEDDIFY_BATCH_SIZE")
+    env_batch = os.getenv("EMBEDDY_BATCH_SIZE")
     if env_batch is not None:
         try:
             runtime_kwargs["batch_size"] = int(env_batch)
         except ValueError as exc:  # pragma: no cover - edge parsing path
-            raise EmbeddifyValidationError(
-                f"Invalid integer value {env_batch!r} for EMBEDDIFY_BATCH_SIZE."
+            raise EmbeddyValidationError(
+                f"Invalid integer value {env_batch!r} for EMBEDDY_BATCH_SIZE."
             ) from exc
 
     def _apply_bool_env(key: str, env_name: str) -> None:
@@ -363,15 +363,15 @@ def load_config_file(path: str | None = None) -> tuple[EmbedderConfig, RuntimeCo
             return
         runtime_kwargs[key] = EmbedderConfig._parse_bool_env(raw, env_name)
 
-    _apply_bool_env("show_progress_bar", "EMBEDDIFY_SHOW_PROGRESS_BAR")
-    _apply_bool_env("enable_cache", "EMBEDDIFY_ENABLE_CACHE")
-    _apply_bool_env("convert_to_numpy", "EMBEDDIFY_CONVERT_TO_NUMPY")
+    _apply_bool_env("show_progress_bar", "EMBEDDY_SHOW_PROGRESS_BAR")
+    _apply_bool_env("enable_cache", "EMBEDDY_ENABLE_CACHE")
+    _apply_bool_env("convert_to_numpy", "EMBEDDY_CONVERT_TO_NUMPY")
 
     try:
         model_config = EmbedderConfig(**model_kwargs)
         runtime_config = RuntimeConfig(**runtime_kwargs)
     except Exception as exc:
-        raise EmbeddifyValidationError(
+        raise EmbeddyValidationError(
             f"Invalid configuration values in {config_path}: {exc}"
         ) from exc
 

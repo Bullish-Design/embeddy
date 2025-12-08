@@ -3,13 +3,13 @@ from __future__ import annotations
 
 from typing import Any
 
-import embeddify
-from embeddify import (
+import embeddy
+from embeddy import (
     Embedding as PublicEmbedding,
     EmbeddingResult as PublicEmbeddingResult,
     Embedder as PublicEmbedder,
     EmbedderConfig as PublicEmbedderConfig,
-    EmbeddifyError as PublicEmbeddifyError,
+    EmbeddyError as PublicEmbeddyError,
     EncodingError as PublicEncodingError,
     ModelLoadError as PublicModelLoadError,
     RuntimeConfig as PublicRuntimeConfig,
@@ -21,16 +21,16 @@ from embeddify import (
     load_config_file as public_load_config_file,
     __version__ as public_version,
 )
-from embeddify.config import EmbedderConfig, RuntimeConfig, load_config_file
-from embeddify.embedder import Embedder
-from embeddify.exceptions import (
-    EmbeddifyError,
+from embeddy.config import EmbedderConfig, RuntimeConfig, load_config_file
+from embeddy.embedder import Embedder
+from embeddy.exceptions import (
+    EmbeddyError,
     EncodingError,
     ModelLoadError,
     SearchError,
     ValidationError,
 )
-from embeddify.models import (
+from embeddy.models import (
     Embedding,
     EmbeddingResult,
     SearchResult,
@@ -40,7 +40,7 @@ from embeddify.models import (
 
 
 class TestPublicAPI:
-    """Tests for the embeddify package's public import surface."""
+    """Tests for the embeddy package's public import surface."""
 
     def test_top_level_reexports_core_types(self) -> None:
         """The root package should re-export the main public API types."""
@@ -55,7 +55,7 @@ class TestPublicAPI:
 
     def test_top_level_reexports_exceptions_and_helpers(self) -> None:
         """Exceptions and helper functions should also be available at package root."""
-        assert PublicEmbeddifyError is EmbeddifyError
+        assert PublicEmbeddyError is EmbeddyError
         assert PublicModelLoadError is ModelLoadError
         assert PublicEncodingError is EncodingError
         assert PublicValidationError is ValidationError
@@ -70,7 +70,7 @@ class TestPublicAPI:
 
     def test_all_contains_public_names(self) -> None:
         """The __all__ attribute should list the documented public API symbols."""
-        public_names = set(getattr(embeddify, "__all__", []))
+        public_names = set(getattr(embeddy, "__all__", []))
         expected_names = {
             "Embedder",
             "EmbedderConfig",
@@ -81,7 +81,7 @@ class TestPublicAPI:
             "SearchResult",
             "SearchResults",
             "SimilarityScore",
-            "EmbeddifyError",
+            "EmbeddyError",
             "ModelLoadError",
             "EncodingError",
             "ValidationError",
@@ -91,5 +91,5 @@ class TestPublicAPI:
         # All expected names must be present, but __all__ may contain extras if
         # we decide to expand the public API in the future.
         missing: set[str] = expected_names - public_names
-        assert not missing, f"Missing names from embeddify.__all__: {sorted(missing)}"
+        assert not missing, f"Missing names from embeddy.__all__: {sorted(missing)}"
 

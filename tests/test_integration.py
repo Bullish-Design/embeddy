@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from embeddify import (
+from embeddy import (
     Embedder,
     EmbedderConfig,
     RuntimeConfig,
@@ -193,7 +193,7 @@ class TestConfigFileWorkflowIntegration:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Environment variables should override values from configuration files."""
-        config_path = tmp_path / "embeddify-config.yaml"
+        config_path = tmp_path / "embeddy-config.yaml"
         config_path.write_text(
             """model:
   path: "/models/from-config"
@@ -209,10 +209,10 @@ runtime:
             encoding="utf-8",
         )
 
-        monkeypatch.setenv("EMBEDDIFY_CONFIG_PATH", str(config_path))
-        monkeypatch.setenv("EMBEDDIFY_MODEL_PATH", "/models/from-env")
-        monkeypatch.setenv("EMBEDDIFY_BATCH_SIZE", "4")
-        monkeypatch.setenv("EMBEDDIFY_ENABLE_CACHE", "true")
+        monkeypatch.setenv("EMBEDDY_CONFIG_PATH", str(config_path))
+        monkeypatch.setenv("EMBEDDY_MODEL_PATH", "/models/from-env")
+        monkeypatch.setenv("EMBEDDY_BATCH_SIZE", "4")
+        monkeypatch.setenv("EMBEDDY_ENABLE_CACHE", "true")
 
         embedder = Embedder.from_config_file()
 

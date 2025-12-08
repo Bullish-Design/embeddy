@@ -1,7 +1,7 @@
-# src/embeddify/__init__.py
+# src/embeddy/__init__.py
 from __future__ import annotations
 
-"""Public package interface for Embeddify.
+"""Public package interface for Embeddy.
 
 This module defines the public API surface that consumers are expected to
 import from. It re-exports the core configuration models, the main
@@ -9,21 +9,21 @@ import from. It re-exports the core configuration models, the main
 
 Example
 -------
->>> from embeddify import Embedder, EmbedderConfig
+>>> from embeddy import Embedder, EmbedderConfig
 >>> config = EmbedderConfig(model_path="/models/test-model")
 >>> embedder = Embedder(config=config)
 """
 
-from embeddify.config import EmbedderConfig, RuntimeConfig, load_config_file
-from embeddify.embedder import Embedder
-from embeddify.exceptions import (
-    EmbeddifyError,
+from embeddy.config import EmbedderConfig, RuntimeConfig, load_config_file
+from embeddy.embedder import Embedder
+from embeddy.exceptions import (
+    EmbeddyError,
     EncodingError,
     ModelLoadError,
     SearchError,
     ValidationError,
 )
-from embeddify.models import (
+from embeddy.models import (
     Embedding,
     EmbeddingResult,
     SearchResult,
@@ -43,7 +43,7 @@ __all__ = [
     "SearchResult",
     "SearchResults",
     "SimilarityScore",
-    "EmbeddifyError",
+    "EmbeddyError",
     "ModelLoadError",
     "EncodingError",
     "ValidationError",

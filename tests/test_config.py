@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
-from embeddify.config import EmbedderConfig, RuntimeConfig, load_config_file
-from embeddify.exceptions import ValidationError as EmbeddifyValidationError
+from embeddy.config import EmbedderConfig, RuntimeConfig, load_config_file
+from embeddy.exceptions import ValidationError as EmbeddyValidationError
 
 
 class TestEmbedderConfigValidation:
@@ -57,10 +57,10 @@ class TestEmbedderConfigFromEnv:
         )
         monkeypatch.setitem(sys.modules, "torch", fake_torch)
 
-        monkeypatch.setenv("EMBEDDIFY_MODEL_PATH", "/env/model")
-        monkeypatch.setenv("EMBEDDIFY_DEVICE", "cuda")
-        monkeypatch.setenv("EMBEDDIFY_NORMALIZE_EMBEDDINGS", "false")
-        monkeypatch.setenv("EMBEDDIFY_TRUST_REMOTE_CODE", "true")
+        monkeypatch.setenv("EMBEDDY_MODEL_PATH", "/env/model")
+        monkeypatch.setenv("EMBEDDY_DEVICE", "cuda")
+        monkeypatch.setenv("EMBEDDY_NORMALIZE_EMBEDDINGS", "false")
+        monkeypatch.setenv("EMBEDDY_TRUST_REMOTE_CODE", "true")
 
         config = EmbedderConfig.from_env()
 
@@ -72,9 +72,9 @@ class TestEmbedderConfigFromEnv:
     def test_from_env_missing_model_path_raises_validation_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.delenv("EMBEDDIFY_MODEL_PATH", raising=False)
+        monkeypatch.delenv("EMBEDDY_MODEL_PATH", raising=False)
 
-        with pytest.raises(EmbeddifyValidationError):
+        with pytest.raises(EmbeddyValidationError):
             EmbedderConfig.from_env()
 
     def test_from_env_invalid_boolean_raises_validation_error(
@@ -85,10 +85,10 @@ class TestEmbedderConfigFromEnv:
         )
         monkeypatch.setitem(sys.modules, "torch", fake_torch)
 
-        monkeypatch.setenv("EMBEDDIFY_MODEL_PATH", "/env/model")
-        monkeypatch.setenv("EMBEDDIFY_NORMALIZE_EMBEDDINGS", "not-a-bool")
+        monkeypatch.setenv("EMBEDDY_MODEL_PATH", "/env/model")
+        monkeypatch.setenv("EMBEDDY_NORMALIZE_EMBEDDINGS", "not-a-bool")
 
-        with pytest.raises(EmbeddifyValidationError):
+        with pytest.raises(EmbeddyValidationError):
             EmbedderConfig.from_env()
 
 
@@ -111,7 +111,7 @@ class TestRuntimeConfigValidation:
     def test_cache_numpy_incompatible_logs_warning(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        caplog.set_level("WARNING", logger="embeddify.config")
+        caplog.set_level("WARNING", logger="embeddy.config")
 
         RuntimeConfig(enable_cache=True, convert_to_numpy=True)
 
@@ -129,10 +129,10 @@ class TestRuntimeConfigFromEnv:
     def test_from_env_uses_defaults_when_unset(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.delenv("EMBEDDIFY_BATCH_SIZE", raising=False)
-        monkeypatch.delenv("EMBEDDIFY_SHOW_PROGRESS_BAR", raising=False)
-        monkeypatch.delenv("EMBEDDIFY_ENABLE_CACHE", raising=False)
-        monkeypatch.delenv("EMBEDDIFY_CONVERT_TO_NUMPY", raising=False)
+        monkeypatch.delenv("EMBEDDY_BATCH_SIZE", raising=False)
+        monkeypatch.delenv("EMBEDDY_SHOW_PROGRESS_BAR", raising=False)
+        monkeypatch.delenv("EMBEDDY_ENABLE_CACHE", raising=False)
+        monkeypatch.delenv("EMBEDDY_CONVERT_TO_NUMPY", raising=False)
 
         config = RuntimeConfig.from_env()
 
@@ -142,10 +142,10 @@ class TestRuntimeConfigFromEnv:
         assert config.convert_to_numpy is False
 
     def test_from_env_parses_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("EMBEDDIFY_BATCH_SIZE", "16")
-        monkeypatch.setenv("EMBEDDIFY_SHOW_PROGRESS_BAR", "1")
-        monkeypatch.setenv("EMBEDDIFY_ENABLE_CACHE", "true")
-        monkeypatch.setenv("EMBEDDIFY_CONVERT_TO_NUMPY", "0")
+        monkeypatch.setenv("EMBEDDY_BATCH_SIZE", "16")
+        monkeypatch.setenv("EMBEDDY_SHOW_PROGRESS_BAR", "1")
+        monkeypatch.setenv("EMBEDDY_ENABLE_CACHE", "true")
+        monkeypatch.setenv("EMBEDDY_CONVERT_TO_NUMPY", "0")
 
         config = RuntimeConfig.from_env()
 
@@ -157,17 +157,17 @@ class TestRuntimeConfigFromEnv:
     def test_from_env_invalid_batch_size_raises_validation_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("EMBEDDIFY_BATCH_SIZE", "not-an-int")
+        monkeypatch.setenv("EMBEDDY_BATCH_SIZE", "not-an-int")
 
-        with pytest.raises(EmbeddifyValidationError):
+        with pytest.raises(EmbeddyValidationError):
             RuntimeConfig.from_env()
 
     def test_from_env_invalid_boolean_raises_validation_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("EMBEDDIFY_ENABLE_CACHE", "maybe")
+        monkeypatch.setenv("EMBEDDY_ENABLE_CACHE", "maybe")
 
-        with pytest.raises(EmbeddifyValidationError):
+        with pytest.raises(EmbeddyValidationError):
             RuntimeConfig.from_env()
 
 
@@ -199,8 +199,8 @@ class TestConfigFileLoading:
 
     def test_env_overrides_file_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
         path = self._fixture_path("valid.yaml")
-        monkeypatch.setenv("EMBEDDIFY_MODEL_PATH", "/override/model")
-        monkeypatch.setenv("EMBEDDIFY_BATCH_SIZE", "64")
+        monkeypatch.setenv("EMBEDDY_MODEL_PATH", "/override/model")
+        monkeypatch.setenv("EMBEDDY_BATCH_SIZE", "64")
 
         model_cfg, runtime_cfg = load_config_file(str(path))
 
@@ -211,7 +211,7 @@ class TestConfigFileLoading:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         path = self._fixture_path("valid.yaml")
-        monkeypatch.setenv("EMBEDDIFY_CONFIG_PATH", str(path))
+        monkeypatch.setenv("EMBEDDY_CONFIG_PATH", str(path))
 
         model_cfg, runtime_cfg = load_config_file()
 
@@ -227,6 +227,6 @@ class TestConfigFileLoading:
     def test_malformed_config_raises_validation_error(self) -> None:
         malformed = self._fixture_path("invalid.yaml")
 
-        with pytest.raises(EmbeddifyValidationError):
+        with pytest.raises(EmbeddyValidationError):
             load_config_file(str(malformed))
 

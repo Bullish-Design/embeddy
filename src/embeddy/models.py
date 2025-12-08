@@ -1,4 +1,4 @@
-# src/embeddify/models.py
+# src/embeddy/models.py
 from __future__ import annotations
 
 from typing import Any

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from embeddify.exceptions import (
-    EmbeddifyError,
+from embeddy.exceptions import (
+    EmbeddyError,
     ModelLoadError,
     EncodingError,
     ValidationError,
@@ -13,10 +13,10 @@ from embeddify.exceptions import (
 
 class TestExceptionsHierarchy:
     def test_all_exceptions_inherit_from_base(self) -> None:
-        assert issubclass(ModelLoadError, EmbeddifyError)
-        assert issubclass(EncodingError, EmbeddifyError)
-        assert issubclass(ValidationError, EmbeddifyError)
-        assert issubclass(SearchError, EmbeddifyError)
+        assert issubclass(ModelLoadError, EmbeddyError)
+        assert issubclass(EncodingError, EmbeddyError)
+        assert issubclass(ValidationError, EmbeddyError)
+        assert issubclass(SearchError, EmbeddyError)
 
     def test_exceptions_can_be_raised_with_message(self) -> None:
         with pytest.raises(ModelLoadError, match="model issue"):

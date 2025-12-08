@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
-from embeddify.models import (
+from embeddy.models import (
     Embedding,
     EmbeddingResult,
     SearchResult,
