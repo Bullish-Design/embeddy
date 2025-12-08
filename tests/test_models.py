@@ -111,3 +111,4 @@ class TestSearchResults:
 
         with pytest.raises(PydanticValidationError):
             SearchResults(results=[hits], query_texts=["query"])
+

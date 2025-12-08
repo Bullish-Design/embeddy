@@ -140,6 +140,33 @@ class EmbeddingResult(BaseModel):
         """Return the number of embeddings in this result."""
         return len(self.embeddings)
 
+    def as_numpy(self) -> np.ndarray:
+        """Return the embeddings as a stacked NumPy array.
+
+        The returned array has shape ``(n_embeddings, dimensions)``. If there are
+        no embeddings, an empty array of shape ``(0, dimensions)`` is returned.
+
+        This helper is intended for downstream plugins and libraries that operate
+        directly on NumPy arrays (e.g., clustering, dimensionality reduction).
+        """
+        if not self.embeddings:
+            return np.empty((0, self.dimensions), dtype=float)
+
+        vectors: list[np.ndarray] = []
+        for embedding in self.embeddings:
+            vec = embedding.vector
+            if isinstance(vec, np.ndarray):
+                arr = vec
+            else:
+                arr = np.asarray(vec, dtype=float)
+            if arr.ndim == 0:
+                raise ValueError(
+                    "Embedding vector is scalar; expected a 1D array for each embedding"
+                )
+            vectors.append(arr.astype(float, copy=False))
+
+        return np.stack(vectors, axis=0)
+
 
 class SearchResult(BaseModel):
     """Represents a single semantic search hit."""
@@ -194,3 +221,4 @@ class SearchResults(BaseModel):
     def num_queries(self) -> int:
         """Return the number of queries represented in this result set."""
         return len(self.results)
+

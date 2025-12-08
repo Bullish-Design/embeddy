@@ -229,3 +229,4 @@ class TestConfigFileLoading:
 
         with pytest.raises(EmbeddifyValidationError):
             load_config_file(str(malformed))
+

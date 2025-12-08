@@ -48,3 +48,4 @@ class TestExceptionsHierarchy:
 
         assert msg in str(error)
         assert msg in repr(error)
+
