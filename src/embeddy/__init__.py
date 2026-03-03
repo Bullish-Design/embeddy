@@ -16,6 +16,7 @@ from embeddy.config import (
     StoreConfig,
     load_config_file,
 )
+from embeddy.embedding import Embedder, EmbedderBackend, LocalBackend, RemoteBackend
 from embeddy.exceptions import (
     ChunkingError,
     EmbeddyError,
@@ -46,7 +47,7 @@ from embeddy.models import (
     SourceMetadata,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 __all__ = [
     # Version
@@ -64,6 +65,11 @@ __all__ = [
     "SearchMode",
     "FusionStrategy",
     "DistanceMetric",
+    # Embedding layer
+    "Embedder",
+    "EmbedderBackend",
+    "LocalBackend",
+    "RemoteBackend",
     # Models - embedding
     "EmbedInput",
     "Embedding",

@@ -44,24 +44,56 @@ class EmbedderConfig(BaseModel):
 
     Targets Qwen3-VL-Embedding-2B by default. Supports multimodal inputs
     (text, images, video) with instruction-aware encoding.
+
+    Supports two backend modes:
+    - ``local``: Load the model in-process (requires GPU/torch).
+    - ``remote``: Call a dedicated embedding server over HTTP (for
+      offloading inference to a remote GPU machine).
     """
 
+    # Backend mode
+    mode: str = Field(
+        default="local",
+        description="Backend mode: 'local' (in-process model) or 'remote' (HTTP client).",
+    )
+    remote_url: str | None = Field(
+        default=None,
+        description="URL of the remote embedding server (e.g. 'http://100.x.y.z:8586'). Required when mode='remote'.",
+    )
+    remote_timeout: float = Field(
+        default=120.0,
+        description="HTTP timeout in seconds for remote embedding requests.",
+    )
+
+    # Model identity
     model_name: str = Field(
         default="Qwen/Qwen3-VL-Embedding-2B",
         description="HuggingFace model identifier or local path.",
     )
+
+    # Local-mode model settings (ignored in remote mode)
     device: str | None = Field(
         default=None,
-        description="Device: 'cpu', 'cuda', 'cuda:N', 'mps', or None for auto-detect.",
+        description="Device: 'cpu', 'cuda', 'cuda:N', 'mps', or None for auto-detect. Local mode only.",
     )
     torch_dtype: str = Field(
         default="bfloat16",
-        description="Torch dtype for model weights: 'float32', 'float16', 'bfloat16'.",
+        description="Torch dtype for model weights: 'float32', 'float16', 'bfloat16'. Local mode only.",
     )
     attn_implementation: str | None = Field(
         default=None,
-        description="Attention implementation: None (auto), 'flash_attention_2', 'sdpa', 'eager'.",
+        description="Attention implementation: None (auto), 'flash_attention_2', 'sdpa', 'eager'. Local mode only.",
     )
+    trust_remote_code: bool = Field(
+        default=True,
+        description="Whether to trust remote code when loading model. Required for Qwen3-VL. Local mode only.",
+    )
+    cache_dir: str | None = Field(
+        default=None,
+        description="Directory for model download cache. Local mode only.",
+    )
+
+    # Embedding parameters (used in both modes)
     embedding_dimension: int = Field(
         default=2048,
         description="Output embedding dimension. MRL supports 64-2048.",
@@ -73,10 +105,6 @@ class EmbedderConfig(BaseModel):
     batch_size: int = Field(
         default=8,
         description="Number of inputs to encode per batch.",
-    )
-    cache_dir: str | None = Field(
-        default=None,
-        description="Directory for model download cache.",
     )
     normalize: bool = Field(
         default=True,
@@ -90,18 +118,31 @@ class EmbedderConfig(BaseModel):
         default="Retrieve relevant documents, images, or text for the user's query.",
         description="Default instruction prepended to query inputs.",
     )
-    trust_remote_code: bool = Field(
-        default=True,
-        description="Whether to trust remote code when loading model. Required for Qwen3-VL.",
-    )
+
     # Image processing
     min_pixels: int = Field(default=4096, description="Minimum pixel count for image inputs.")
     max_pixels: int = Field(default=1843200, description="Maximum pixel count for image inputs (1280x1440).")
+
     # LRU cache
     lru_cache_size: int = Field(
         default=1024,
         description="Max entries in the embedder's in-memory LRU cache. 0 to disable.",
     )
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, value: str) -> str:
+        allowed = {"local", "remote"}
+        if value not in allowed:
+            raise ValueError(f"mode must be one of {sorted(allowed)}, got {value!r}")
+        return value
+
+    @field_validator("remote_timeout")
+    @classmethod
+    def validate_remote_timeout(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("remote_timeout must be positive")
+        return value
 
     @field_validator("model_name")
     @classmethod
@@ -156,17 +197,42 @@ class EmbedderConfig(BaseModel):
             raise ValueError("lru_cache_size must be non-negative")
         return value
 
+    @model_validator(mode="after")
+    def validate_remote_url_required(self) -> EmbedderConfig:
+        """When mode is 'remote', remote_url must be set."""
+        if self.mode == "remote" and not self.remote_url:
+            raise ValueError("remote_url is required when mode='remote'")
+        return self
+
     @classmethod
     def from_env(cls) -> EmbedderConfig:
         """Construct configuration from environment variables.
 
         All fields can be overridden via EMBEDDY_* environment variables:
+            EMBEDDY_EMBEDDER_MODE, EMBEDDY_REMOTE_URL, EMBEDDY_REMOTE_TIMEOUT,
             EMBEDDY_MODEL_NAME, EMBEDDY_DEVICE, EMBEDDY_TORCH_DTYPE,
             EMBEDDY_EMBEDDING_DIMENSION, EMBEDDY_MAX_LENGTH,
             EMBEDDY_BATCH_SIZE, EMBEDDY_NORMALIZE, EMBEDDY_CACHE_DIR,
             EMBEDDY_TRUST_REMOTE_CODE, EMBEDDY_LRU_CACHE_SIZE
         """
         kwargs: dict[str, Any] = {}
+
+        env_mode = os.getenv("EMBEDDY_EMBEDDER_MODE")
+        if env_mode is not None:
+            kwargs["mode"] = env_mode
+
+        env_remote_url = os.getenv("EMBEDDY_REMOTE_URL")
+        if env_remote_url is not None:
+            kwargs["remote_url"] = env_remote_url
+
+        env_remote_timeout = os.getenv("EMBEDDY_REMOTE_TIMEOUT")
+        if env_remote_timeout is not None:
+            try:
+                kwargs["remote_timeout"] = float(env_remote_timeout)
+            except ValueError as exc:
+                raise EmbeddyValidationError(
+                    f"Invalid float value {env_remote_timeout!r} for EMBEDDY_REMOTE_TIMEOUT."
+                ) from exc
 
         env_model = os.getenv("EMBEDDY_MODEL_NAME")
         if env_model is not None:

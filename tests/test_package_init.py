@@ -13,6 +13,11 @@ from embeddy import (
     ServerConfig,
     StoreConfig,
     load_config_file,
+    # Embedding layer
+    Embedder,
+    EmbedderBackend,
+    LocalBackend,
+    RemoteBackend,
     # Models - enums
     ContentType,
     DistanceMetric,
@@ -74,7 +79,7 @@ class TestPublicAPI:
 
     def test_version_attribute_is_defined(self) -> None:
         assert isinstance(__version__, str)
-        assert __version__ == "0.3.0"
+        assert __version__ == "0.3.1"
 
     def test_all_contains_expected_names(self) -> None:
         public_names = set(getattr(embeddy, "__all__", []))
@@ -88,6 +93,11 @@ class TestPublicAPI:
             "ServerConfig",
             "EmbeddyConfig",
             "load_config_file",
+            # Embedding layer
+            "Embedder",
+            "EmbedderBackend",
+            "LocalBackend",
+            "RemoteBackend",
             # Models - enums
             "ContentType",
             "SearchMode",
@@ -137,6 +147,10 @@ class TestPublicAPI:
             "ServerConfig",
             "EmbeddyConfig",
             "load_config_file",
+            "Embedder",
+            "EmbedderBackend",
+            "LocalBackend",
+            "RemoteBackend",
             "ContentType",
             "SearchMode",
             "FusionStrategy",

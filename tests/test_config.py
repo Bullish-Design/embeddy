@@ -106,12 +106,53 @@ class TestEmbedderConfigValidation:
         with pytest.raises(PydanticValidationError):
             EmbedderConfig(lru_cache_size=-1)
 
+    # Remote mode tests
+
+    def test_default_mode_is_local(self) -> None:
+        config = EmbedderConfig()
+        assert config.mode == "local"
+        assert config.remote_url is None
+        assert config.remote_timeout == 120.0
+
+    def test_remote_mode_requires_url(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            EmbedderConfig(mode="remote")
+
+    def test_remote_mode_with_url(self) -> None:
+        config = EmbedderConfig(mode="remote", remote_url="http://100.64.0.1:8586")
+        assert config.mode == "remote"
+        assert config.remote_url == "http://100.64.0.1:8586"
+        assert config.remote_timeout == 120.0
+
+    def test_remote_mode_custom_timeout(self) -> None:
+        config = EmbedderConfig(mode="remote", remote_url="http://host:8586", remote_timeout=30.0)
+        assert config.remote_timeout == 30.0
+
+    def test_invalid_mode_raises_validation_error(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            EmbedderConfig(mode="distributed")
+
+    def test_remote_timeout_must_be_positive(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            EmbedderConfig(mode="remote", remote_url="http://host:8586", remote_timeout=0)
+        with pytest.raises(PydanticValidationError):
+            EmbedderConfig(mode="remote", remote_url="http://host:8586", remote_timeout=-5)
+
+    def test_local_mode_ignores_remote_url(self) -> None:
+        """In local mode, remote_url can be set but isn't required."""
+        config = EmbedderConfig(mode="local", remote_url="http://host:8586")
+        assert config.mode == "local"
+        assert config.remote_url == "http://host:8586"
+
 
 class TestEmbedderConfigFromEnv:
     def test_from_env_defaults(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When no env vars are set, from_env should return default config."""
         # Clear any potentially set env vars
         for key in [
+            "EMBEDDY_EMBEDDER_MODE",
+            "EMBEDDY_REMOTE_URL",
+            "EMBEDDY_REMOTE_TIMEOUT",
             "EMBEDDY_MODEL_NAME",
             "EMBEDDY_DEVICE",
             "EMBEDDY_TORCH_DTYPE",
@@ -166,6 +207,25 @@ class TestEmbedderConfigFromEnv:
         monkeypatch.setenv("EMBEDDY_CACHE_DIR", "/tmp/models")
         config = EmbedderConfig.from_env()
         assert config.cache_dir == "/tmp/models"
+
+    def test_from_env_remote_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("EMBEDDY_EMBEDDER_MODE", "remote")
+        monkeypatch.setenv("EMBEDDY_REMOTE_URL", "http://100.64.0.1:8586")
+        monkeypatch.setenv("EMBEDDY_REMOTE_TIMEOUT", "30.0")
+        config = EmbedderConfig.from_env()
+        assert config.mode == "remote"
+        assert config.remote_url == "http://100.64.0.1:8586"
+        assert config.remote_timeout == 30.0
+
+    def test_from_env_invalid_remote_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("EMBEDDY_REMOTE_TIMEOUT", "not-a-number")
+        with pytest.raises(EmbeddyValidationError):
+            EmbedderConfig.from_env()
+
+    def test_from_env_remote_mode_missing_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("EMBEDDY_EMBEDDER_MODE", "remote")
+        with pytest.raises(EmbeddyValidationError):
+            EmbedderConfig.from_env()
 
 
 # ---------------------------------------------------------------------------
