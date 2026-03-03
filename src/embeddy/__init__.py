@@ -17,6 +17,7 @@ from embeddy.config import (
     load_config_file,
 )
 from embeddy.embedding import Embedder, EmbedderBackend, LocalBackend, RemoteBackend
+from embeddy.store import VectorStore
 from embeddy.exceptions import (
     ChunkingError,
     EmbeddyError,
@@ -47,7 +48,7 @@ from embeddy.models import (
     SourceMetadata,
 )
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 
 __all__ = [
     # Version
@@ -70,6 +71,8 @@ __all__ = [
     "EmbedderBackend",
     "LocalBackend",
     "RemoteBackend",
+    # Store layer
+    "VectorStore",
     # Models - embedding
     "EmbedInput",
     "Embedding",

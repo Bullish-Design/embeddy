@@ -18,6 +18,8 @@ from embeddy import (
     EmbedderBackend,
     LocalBackend,
     RemoteBackend,
+    # Store layer
+    VectorStore,
     # Models - enums
     ContentType,
     DistanceMetric,
@@ -60,6 +62,7 @@ from embeddy.config import load_config_file as direct_load_config_file
 from embeddy.exceptions import EmbeddyError as DirectEmbeddyError
 from embeddy.models import Embedding as DirectEmbedding
 from embeddy.models import SearchResult as DirectSearchResult
+from embeddy.store import VectorStore as DirectVectorStore
 
 
 class TestPublicAPI:
@@ -74,12 +77,15 @@ class TestPublicAPI:
         assert Embedding is DirectEmbedding
         assert SearchResult is DirectSearchResult
 
+    def test_top_level_reexports_store(self) -> None:
+        assert VectorStore is DirectVectorStore
+
     def test_top_level_reexports_exceptions(self) -> None:
         assert EmbeddyError is DirectEmbeddyError
 
     def test_version_attribute_is_defined(self) -> None:
         assert isinstance(__version__, str)
-        assert __version__ == "0.3.1"
+        assert __version__ == "0.3.2"
 
     def test_all_contains_expected_names(self) -> None:
         public_names = set(getattr(embeddy, "__all__", []))
@@ -98,6 +104,8 @@ class TestPublicAPI:
             "EmbedderBackend",
             "LocalBackend",
             "RemoteBackend",
+            # Store layer
+            "VectorStore",
             # Models - enums
             "ContentType",
             "SearchMode",
@@ -151,6 +159,7 @@ class TestPublicAPI:
             "EmbedderBackend",
             "LocalBackend",
             "RemoteBackend",
+            "VectorStore",
             "ContentType",
             "SearchMode",
             "FusionStrategy",
