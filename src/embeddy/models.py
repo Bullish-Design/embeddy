@@ -1,29 +1,109 @@
 # src/embeddy/models.py
+"""Core data models for embeddy.
+
+All data structures are Pydantic v2 BaseModels with validators. This module
+defines the shared types used across all layers: embedding, ingestion,
+chunking, storage, search, and pipeline.
+"""
+
 from __future__ import annotations
 
+import math
+import uuid
+from datetime import datetime
+from enum import Enum
 from typing import Any
 
-import math
 import numpy as np
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
+# ---------------------------------------------------------------------------
+# Enums
+# ---------------------------------------------------------------------------
+
+
+class ContentType(str, Enum):
+    """Content type of an ingested document."""
+
+    PYTHON = "python"
+    JAVASCRIPT = "javascript"
+    TYPESCRIPT = "typescript"
+    RUST = "rust"
+    GO = "go"
+    C = "c"
+    CPP = "cpp"
+    JAVA = "java"
+    RUBY = "ruby"
+    SHELL = "shell"
+    MARKDOWN = "markdown"
+    RST = "rst"
+    GENERIC = "generic"
+    DOCLING = "docling"
+
+
+class SearchMode(str, Enum):
+    """Search mode for retrieval."""
+
+    VECTOR = "vector"
+    FULLTEXT = "fulltext"
+    HYBRID = "hybrid"
+
+
+class FusionStrategy(str, Enum):
+    """Score fusion strategy for hybrid search."""
+
+    RRF = "rrf"
+    WEIGHTED = "weighted"
+
+
+class DistanceMetric(str, Enum):
+    """Distance/similarity metric for vector search."""
+
+    COSINE = "cosine"
+    DOT = "dot"
+
+
+# ---------------------------------------------------------------------------
+# Embedding models
+# ---------------------------------------------------------------------------
+
+
+class EmbedInput(BaseModel):
+    """Multimodal input for embedding.
+
+    At least one of ``text``, ``image``, or ``video`` must be provided.
+    """
+
+    text: str | None = None
+    image: str | None = None  # File path, URL, or base64
+    video: str | None = None  # File path or URL
+    instruction: str | None = None  # Per-input instruction override
+
+    @model_validator(mode="after")
+    def validate_has_content(self) -> EmbedInput:
+        """Ensure at least one input modality is provided."""
+        if self.text is None and self.image is None and self.video is None:
+            raise ValueError("At least one of 'text', 'image', or 'video' must be provided")
+        return self
+
+
 class Embedding(BaseModel):
-    """Represents a single embedding vector with associated metadata.
+    """A single embedding vector with associated metadata.
 
     Attributes:
         vector: The numeric embedding vector as a list of floats or numpy array.
         model_name: Identifier of the model that produced the embedding.
         normalized: Whether the vector has been L2-normalized.
-        text: Optional original source text that was encoded.
+        input_type: What type of input produced this embedding (text/image/video/multimodal).
     """
 
     model_config = {"arbitrary_types_allowed": True}
 
     vector: list[float] | np.ndarray = Field(description="Embedding vector representation")
     model_name: str = Field(description="Name of the model used to generate this embedding")
-    normalized: bool = Field(description="Whether the vector is L2-normalized")
-    text: str | None = Field(default=None, description="Optional original text that produced this embedding")
+    normalized: bool = Field(default=True, description="Whether the vector is L2-normalized")
+    input_type: str = Field(default="text", description="Input modality: text, image, video, multimodal")
 
     @field_validator("vector")
     @classmethod
@@ -32,13 +112,12 @@ class Embedding(BaseModel):
         if isinstance(value, np.ndarray):
             if value.size == 0:
                 raise ValueError("Embedding vector cannot be empty")
-        else:
-            if len(value) == 0:
-                raise ValueError("Embedding vector cannot be empty")
+        elif len(value) == 0:
+            raise ValueError("Embedding vector cannot be empty")
         return value
 
     @property
-    def dimensions(self) -> int:
+    def dimension(self) -> int:
         """Return the dimensionality of the embedding vector."""
         if isinstance(self.vector, np.ndarray):
             if self.vector.ndim == 0:
@@ -46,21 +125,22 @@ class Embedding(BaseModel):
             return int(self.vector.shape[-1])
         return len(self.vector)
 
+    def to_list(self) -> list[float]:
+        """Return the vector as a plain list of floats."""
+        if isinstance(self.vector, np.ndarray):
+            return self.vector.tolist()
+        return list(self.vector)
+
 
 class SimilarityScore(BaseModel):
-    """Represents the similarity between two embeddings.
-
-    The score is typically in the range [-1, 1] for cosine similarity, but this
-    is not enforced so that other metrics can be supported in the future.
-    """
+    """Similarity between two embeddings."""
 
     score: float = Field(description="Numeric similarity value")
-    metric: str = Field(default="cosine", description="Similarity metric identifier (e.g. 'cosine', 'dot')")
+    metric: str = Field(default="cosine", description="Similarity metric identifier")
 
     @field_validator("metric")
     @classmethod
     def validate_metric(cls, value: str) -> str:
-        """Validate that the metric name is supported."""
         allowed = {"cosine", "dot"}
         if value not in allowed:
             raise ValueError(f"Invalid similarity metric '{value}'. Must be one of {sorted(allowed)}")
@@ -74,151 +154,215 @@ class SimilarityScore(BaseModel):
         return NotImplemented  # type: ignore[return-value]
 
     def __lt__(self, other: Any) -> bool:
-        other_score = self._other_score(other)
-        if other_score is NotImplemented:  # type: ignore[comparison-overlap]
+        s = self._other_score(other)
+        if s is NotImplemented:  # type: ignore[comparison-overlap]
             return NotImplemented  # type: ignore[return-value]
-        return self.score < other_score
+        return self.score < s
 
     def __le__(self, other: Any) -> bool:
-        other_score = self._other_score(other)
-        if other_score is NotImplemented:  # type: ignore[comparison-overlap]
+        s = self._other_score(other)
+        if s is NotImplemented:  # type: ignore[comparison-overlap]
             return NotImplemented  # type: ignore[return-value]
-        return self.score <= other_score
+        return self.score <= s
 
     def __gt__(self, other: Any) -> bool:
-        other_score = self._other_score(other)
-        if other_score is NotImplemented:  # type: ignore[comparison-overlap]
+        s = self._other_score(other)
+        if s is NotImplemented:  # type: ignore[comparison-overlap]
             return NotImplemented  # type: ignore[return-value]
-        return self.score > other_score
+        return self.score > s
 
     def __ge__(self, other: Any) -> bool:
-        other_score = self._other_score(other)
-        if other_score is NotImplemented:  # type: ignore[comparison-overlap]
+        s = self._other_score(other)
+        if s is NotImplemented:  # type: ignore[comparison-overlap]
             return NotImplemented  # type: ignore[return-value]
-        return self.score >= other_score
+        return self.score >= s
 
     def __eq__(self, other: Any) -> bool:  # type: ignore[override]
-        other_score = self._other_score(other)
-        if other_score is NotImplemented:  # type: ignore[comparison-overlap]
+        s = self._other_score(other)
+        if s is NotImplemented:  # type: ignore[comparison-overlap]
             return NotImplemented  # type: ignore[return-value]
-        return self.score == other_score
+        return self.score == s
 
 
-class EmbeddingResult(BaseModel):
-    """Batch of embeddings produced in a single encode operation.
+# ---------------------------------------------------------------------------
+# Source & ingestion models
+# ---------------------------------------------------------------------------
 
-    Attributes:
-        embeddings: The list of individual embedding objects.
-        model_name: Name of the model used for encoding.
-        dimensions: Expected dimensionality for all embeddings.
+
+class SourceMetadata(BaseModel):
+    """Metadata about the source of ingested content."""
+
+    file_path: str | None = None
+    url: str | None = None
+    size_bytes: int | None = None
+    modified_at: datetime | None = None
+    content_hash: str | None = None  # SHA-256 for change detection / dedup
+
+
+class IngestResult(BaseModel):
+    """Result of ingesting a single document or text.
+
+    Carries the raw/exported text, detected content type, source metadata,
+    and optionally the structured Docling document.
     """
 
-    model_config = {"arbitrary_types_allowed": True}
+    text: str
+    content_type: ContentType
+    source: SourceMetadata = Field(default_factory=SourceMetadata)
+    # DoclingDocument is typed as Any here to avoid importing docling at
+    # module level. The actual type is enforced at runtime in the ingest layer.
+    docling_document: Any | None = None
 
-    embeddings: list[Embedding] = Field(default_factory=list, description="Embeddings in this batch")
-    model_name: str = Field(description="Model used to produce all embeddings")
-    dimensions: int = Field(description="Dimensionality of every embedding vector")
 
-    @model_validator(mode="after")
-    def validate_dimensions(self) -> EmbeddingResult:
-        """Ensure all embeddings share the same dimensionality as `dimensions`."""
-        if not self.embeddings:
-            return self
-        if self.dimensions <= 0:
-            raise ValueError("EmbeddingResult.dimensions must be a positive integer")
+# ---------------------------------------------------------------------------
+# Chunk models
+# ---------------------------------------------------------------------------
 
-        for index, embedding in enumerate(self.embeddings):
-            emb_dim = embedding.dimensions
-            if emb_dim != self.dimensions:
-                raise ValueError(
-                    f"Inconsistent embedding dimensions at index {index}: expected {self.dimensions}, got {emb_dim}"
-                )
-        return self
 
-    @property
-    def count(self) -> int:
-        """Return the number of embeddings in this result."""
-        return len(self.embeddings)
+def _generate_chunk_id() -> str:
+    return str(uuid.uuid4())
 
-    def as_numpy(self) -> np.ndarray:
-        """Return the embeddings as a stacked NumPy array.
 
-        The returned array has shape ``(n_embeddings, dimensions)``. If there are
-        no embeddings, an empty array of shape ``(0, dimensions)`` is returned.
+class Chunk(BaseModel):
+    """A chunk of content ready for embedding."""
 
-        This helper is intended for downstream plugins and libraries that operate
-        directly on NumPy arrays (e.g., clustering, dimensionality reduction).
-        """
-        if not self.embeddings:
-            return np.empty((0, self.dimensions), dtype=float)
+    id: str = Field(default_factory=_generate_chunk_id)
+    content: str
+    content_type: ContentType
+    chunk_type: str = Field(default="generic")  # function, class, heading_section, paragraph, window, etc.
+    source: SourceMetadata = Field(default_factory=SourceMetadata)
+    start_line: int | None = None
+    end_line: int | None = None
+    name: str | None = None  # Function/class name, heading text, etc.
+    parent: str | None = None  # Parent class for methods, parent heading for subsections
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
-        vectors: list[np.ndarray] = []
-        for embedding in self.embeddings:
-            vec = embedding.vector
-            if isinstance(vec, np.ndarray):
-                arr = vec
-            else:
-                arr = np.asarray(vec, dtype=float)
-            if arr.ndim == 0:
-                raise ValueError(
-                    "Embedding vector is scalar; expected a 1D array for each embedding"
-                )
-            vectors.append(arr.astype(float, copy=False))
+    @field_validator("content")
+    @classmethod
+    def validate_content_not_empty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Chunk content cannot be empty or whitespace only")
+        return value
 
-        return np.stack(vectors, axis=0)
+
+# ---------------------------------------------------------------------------
+# Collection models
+# ---------------------------------------------------------------------------
+
+
+class Collection(BaseModel):
+    """A named collection of vectors in the store."""
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    dimension: int
+    model_name: str
+    distance_metric: DistanceMetric = DistanceMetric.COSINE
+    created_at: datetime = Field(default_factory=datetime.now)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Collection name cannot be empty")
+        return value
+
+    @field_validator("dimension")
+    @classmethod
+    def validate_dimension(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("Collection dimension must be at least 1")
+        return value
+
+
+class CollectionStats(BaseModel):
+    """Statistics about a collection."""
+
+    name: str
+    chunk_count: int = 0
+    source_count: int = 0
+    dimension: int = 0
+    model_name: str = ""
+    storage_bytes: int | None = None
+
+
+# ---------------------------------------------------------------------------
+# Search models
+# ---------------------------------------------------------------------------
+
+
+class SearchFilters(BaseModel):
+    """Pre-filters applied before KNN or FTS search."""
+
+    content_types: list[ContentType] | None = None
+    source_path_prefix: str | None = None
+    chunk_types: list[str] | None = None
+    metadata_match: dict[str, Any] | None = None
 
 
 class SearchResult(BaseModel):
-    """Represents a single semantic search hit."""
+    """A single search hit."""
 
-    corpus_id: int = Field(description="Index of the matching item in the original corpus")
-    score: float = Field(description="Similarity score for this match")
-    text: str | None = Field(default=None, description="Optional corpus text corresponding to the hit")
-
-    @field_validator("corpus_id")
-    @classmethod
-    def validate_corpus_id(cls, value: int) -> int:
-        """Ensure the corpus index is non-negative."""
-        if value < 0:
-            raise ValueError("SearchResult.corpus_id must be non-negative")
-        return value
+    chunk_id: str
+    content: str
+    score: float
+    source_path: str | None = None
+    content_type: str | None = None
+    chunk_type: str | None = None
+    start_line: int | None = None
+    end_line: int | None = None
+    name: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("score")
     @classmethod
     def validate_score_finite(cls, value: float) -> float:
-        """Ensure the similarity score is a finite float."""
         if not math.isfinite(value):
             raise ValueError("SearchResult.score must be a finite float")
         return value
 
 
 class SearchResults(BaseModel):
-    """Container for semantic search results for one or more queries."""
+    """Container for search results."""
 
-    results: list[list[SearchResult]] = Field(
-        default_factory=list,
-        description="Outer list is per-query, inner list contains hits for that query",
-    )
-    query_texts: list[str] | None = Field(
-        default=None,
-        description="Optional list of original query texts, aligned with `results`",
-    )
+    results: list[SearchResult] = Field(default_factory=list)
+    query: str = ""
+    collection: str = ""
+    mode: SearchMode = SearchMode.HYBRID
+    total_results: int = 0
+    elapsed_ms: float = 0.0
 
     @model_validator(mode="after")
-    def validate_sorted_results(self) -> SearchResults:
-        """Ensure that each query's results are sorted by score descending."""
-        for query_index, query_results in enumerate(self.results):
-            if len(query_results) < 2:
-                continue
-            scores = [hit.score for hit in query_results]
+    def validate_results_sorted(self) -> SearchResults:
+        """Ensure results are sorted by score descending."""
+        if len(self.results) >= 2:
+            scores = [r.score for r in self.results]
             if scores != sorted(scores, reverse=True):
-                raise ValueError(
-                    f"Search results for query index {query_index} must be sorted by score in descending order"
-                )
+                raise ValueError("Search results must be sorted by score in descending order")
         return self
 
-    @property
-    def num_queries(self) -> int:
-        """Return the number of queries represented in this result set."""
-        return len(self.results)
 
+# ---------------------------------------------------------------------------
+# Pipeline / ingestion stats
+# ---------------------------------------------------------------------------
+
+
+class IngestError(BaseModel):
+    """An error that occurred during ingestion of a specific file."""
+
+    file_path: str | None = None
+    error: str
+    error_type: str = ""
+
+
+class IngestStats(BaseModel):
+    """Statistics from a pipeline ingest operation."""
+
+    files_processed: int = 0
+    chunks_created: int = 0
+    chunks_embedded: int = 0
+    chunks_stored: int = 0
+    chunks_skipped: int = 0  # Skipped due to content-hash dedup
+    errors: list[IngestError] = Field(default_factory=list)
+    elapsed_seconds: float = 0.0

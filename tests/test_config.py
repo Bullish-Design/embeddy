@@ -1,232 +1,379 @@
+# tests/test_config.py
+"""Tests for all embeddy configuration classes (Phase 1).
+
+Covers: EmbedderConfig, StoreConfig, ChunkConfig, PipelineConfig,
+ServerConfig, EmbeddyConfig, load_config_file, EmbedderConfig.from_env.
+"""
+
 from __future__ import annotations
 
-import os
-import sys
-import types
+import json
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
-from embeddy.config import EmbedderConfig, RuntimeConfig, load_config_file
+from embeddy.config import (
+    ChunkConfig,
+    EmbedderConfig,
+    EmbeddyConfig,
+    PipelineConfig,
+    ServerConfig,
+    StoreConfig,
+    load_config_file,
+)
 from embeddy.exceptions import ValidationError as EmbeddyValidationError
 
 
+# ---------------------------------------------------------------------------
+# EmbedderConfig
+# ---------------------------------------------------------------------------
+
+
 class TestEmbedderConfigValidation:
-    def test_valid_configuration_minimal(self) -> None:
-        config = EmbedderConfig(model_path="/models/test-model")
+    def test_defaults(self) -> None:
+        config = EmbedderConfig()
+        assert config.model_name == "Qwen/Qwen3-VL-Embedding-2B"
+        assert config.device is None
+        assert config.torch_dtype == "bfloat16"
+        assert config.embedding_dimension == 2048
+        assert config.max_length == 8192
+        assert config.batch_size == 8
+        assert config.normalize is True
+        assert config.trust_remote_code is True
+        assert config.lru_cache_size == 1024
 
-        assert config.model_path == "/models/test-model"
-        assert config.device == "cpu"
-        assert config.normalize_embeddings is True
-        assert config.trust_remote_code is False
-
-    def test_empty_model_path_raises_validation_error(self) -> None:
-        with pytest.raises(PydanticValidationError):
-            EmbedderConfig(model_path="")
-
-    def test_whitespace_model_path_raises_validation_error(self) -> None:
-        with pytest.raises(PydanticValidationError):
-            EmbedderConfig(model_path="   ")
-
-    def test_invalid_device_string_raises_validation_error(self) -> None:
-        with pytest.raises(PydanticValidationError):
-            EmbedderConfig(model_path="/models/test", device="gpu")
-
-        with pytest.raises(PydanticValidationError):
-            EmbedderConfig(model_path="/models/test", device="cuda:x")
-
-    def test_cuda_device_when_unavailable_raises_validation_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # Provide a fake torch module where cuda.is_available() returns False.
-        fake_torch = types.SimpleNamespace(
-            cuda=types.SimpleNamespace(is_available=lambda: False)
+    def test_custom_values(self) -> None:
+        config = EmbedderConfig(
+            model_name="custom/model",
+            device="cpu",
+            torch_dtype="float32",
+            embedding_dimension=512,
+            max_length=4096,
+            batch_size=16,
+            normalize=False,
+            trust_remote_code=False,
+            lru_cache_size=0,
         )
-        monkeypatch.setitem(sys.modules, "torch", fake_torch)
+        assert config.model_name == "custom/model"
+        assert config.device == "cpu"
+        assert config.torch_dtype == "float32"
+        assert config.embedding_dimension == 512
+        assert config.normalize is False
 
+    def test_empty_model_name_raises_validation_error(self) -> None:
         with pytest.raises(PydanticValidationError):
-            EmbedderConfig(model_path="/models/test", device="cuda")
+            EmbedderConfig(model_name="")
+
+    def test_whitespace_model_name_raises_validation_error(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            EmbedderConfig(model_name="   ")
+
+    def test_invalid_torch_dtype_raises_validation_error(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            EmbedderConfig(torch_dtype="int8")
+
+    def test_invalid_attn_implementation_raises_validation_error(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            EmbedderConfig(attn_implementation="invalid")
+
+    def test_valid_attn_implementations(self) -> None:
+        for impl in ["flash_attention_2", "sdpa", "eager"]:
+            config = EmbedderConfig(attn_implementation=impl)
+            assert config.attn_implementation == impl
+
+    def test_none_attn_implementation(self) -> None:
+        config = EmbedderConfig(attn_implementation=None)
+        assert config.attn_implementation is None
+
+    def test_embedding_dimension_too_high_raises_validation_error(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            EmbedderConfig(embedding_dimension=4096)
+
+    def test_embedding_dimension_zero_raises_validation_error(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            EmbedderConfig(embedding_dimension=0)
+
+    def test_batch_size_zero_raises_validation_error(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            EmbedderConfig(batch_size=0)
+
+    def test_max_length_zero_raises_validation_error(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            EmbedderConfig(max_length=0)
+
+    def test_negative_lru_cache_size_raises_validation_error(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            EmbedderConfig(lru_cache_size=-1)
 
 
 class TestEmbedderConfigFromEnv:
-    def test_from_env_successful_roundtrip(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # Fake torch reporting CUDA availability so that "cuda" passes validation.
-        fake_torch = types.SimpleNamespace(
-            cuda=types.SimpleNamespace(is_available=lambda: True)
-        )
-        monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    def test_from_env_defaults(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When no env vars are set, from_env should return default config."""
+        # Clear any potentially set env vars
+        for key in [
+            "EMBEDDY_MODEL_NAME",
+            "EMBEDDY_DEVICE",
+            "EMBEDDY_TORCH_DTYPE",
+            "EMBEDDY_EMBEDDING_DIMENSION",
+            "EMBEDDY_MAX_LENGTH",
+            "EMBEDDY_BATCH_SIZE",
+            "EMBEDDY_NORMALIZE",
+            "EMBEDDY_CACHE_DIR",
+            "EMBEDDY_TRUST_REMOTE_CODE",
+            "EMBEDDY_LRU_CACHE_SIZE",
+        ]:
+            monkeypatch.delenv(key, raising=False)
 
-        monkeypatch.setenv("EMBEDDY_MODEL_PATH", "/env/model")
+        config = EmbedderConfig.from_env()
+        assert config.model_name == "Qwen/Qwen3-VL-Embedding-2B"
+        assert config.batch_size == 8
+
+    def test_from_env_overrides(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("EMBEDDY_MODEL_NAME", "custom/model")
         monkeypatch.setenv("EMBEDDY_DEVICE", "cuda")
-        monkeypatch.setenv("EMBEDDY_NORMALIZE_EMBEDDINGS", "false")
-        monkeypatch.setenv("EMBEDDY_TRUST_REMOTE_CODE", "true")
+        monkeypatch.setenv("EMBEDDY_TORCH_DTYPE", "float16")
+        monkeypatch.setenv("EMBEDDY_EMBEDDING_DIMENSION", "512")
+        monkeypatch.setenv("EMBEDDY_MAX_LENGTH", "4096")
+        monkeypatch.setenv("EMBEDDY_BATCH_SIZE", "32")
+        monkeypatch.setenv("EMBEDDY_NORMALIZE", "false")
+        monkeypatch.setenv("EMBEDDY_TRUST_REMOTE_CODE", "0")
+        monkeypatch.setenv("EMBEDDY_LRU_CACHE_SIZE", "256")
 
         config = EmbedderConfig.from_env()
 
-        assert config.model_path == "/env/model"
+        assert config.model_name == "custom/model"
         assert config.device == "cuda"
-        assert config.normalize_embeddings is False
-        assert config.trust_remote_code is True
+        assert config.torch_dtype == "float16"
+        assert config.embedding_dimension == 512
+        assert config.max_length == 4096
+        assert config.batch_size == 32
+        assert config.normalize is False
+        assert config.trust_remote_code is False
+        assert config.lru_cache_size == 256
 
-    def test_from_env_missing_model_path_raises_validation_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv("EMBEDDY_MODEL_PATH", raising=False)
-
+    def test_from_env_invalid_boolean_raises_validation_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("EMBEDDY_NORMALIZE", "not-a-bool")
         with pytest.raises(EmbeddyValidationError):
             EmbedderConfig.from_env()
 
-    def test_from_env_invalid_boolean_raises_validation_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        fake_torch = types.SimpleNamespace(
-            cuda=types.SimpleNamespace(is_available=lambda: True)
+    def test_from_env_invalid_int_raises_validation_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("EMBEDDY_EMBEDDING_DIMENSION", "abc")
+        with pytest.raises(EmbeddyValidationError):
+            EmbedderConfig.from_env()
+
+    def test_from_env_cache_dir(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("EMBEDDY_CACHE_DIR", "/tmp/models")
+        config = EmbedderConfig.from_env()
+        assert config.cache_dir == "/tmp/models"
+
+
+# ---------------------------------------------------------------------------
+# StoreConfig
+# ---------------------------------------------------------------------------
+
+
+class TestStoreConfigValidation:
+    def test_defaults(self) -> None:
+        config = StoreConfig()
+        assert config.db_path == "embeddy.db"
+        assert config.wal_mode is True
+
+    def test_custom_values(self) -> None:
+        config = StoreConfig(db_path="/data/my.db", wal_mode=False)
+        assert config.db_path == "/data/my.db"
+        assert config.wal_mode is False
+
+    def test_empty_db_path_raises_validation_error(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            StoreConfig(db_path="")
+
+
+# ---------------------------------------------------------------------------
+# ChunkConfig
+# ---------------------------------------------------------------------------
+
+
+class TestChunkConfigValidation:
+    def test_defaults(self) -> None:
+        config = ChunkConfig()
+        assert config.strategy == "auto"
+        assert config.max_tokens == 512
+        assert config.overlap_tokens == 64
+        assert config.merge_short is True
+        assert config.min_tokens == 64
+
+    def test_valid_strategies(self) -> None:
+        for strategy in ["auto", "python", "markdown", "paragraph", "token_window", "docling"]:
+            config = ChunkConfig(strategy=strategy)
+            assert config.strategy == strategy
+
+    def test_invalid_strategy_raises_validation_error(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            ChunkConfig(strategy="unknown")
+
+    def test_max_tokens_zero_raises_validation_error(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            ChunkConfig(max_tokens=0)
+
+    def test_negative_overlap_raises_validation_error(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            ChunkConfig(overlap_tokens=-1)
+
+    def test_overlap_exceeds_max_tokens_raises_validation_error(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            ChunkConfig(max_tokens=100, overlap_tokens=100)
+
+    def test_invalid_python_granularity_raises_validation_error(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            ChunkConfig(python_granularity="statement")
+
+    def test_markdown_heading_level_out_of_range(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            ChunkConfig(markdown_heading_level=0)
+        with pytest.raises(PydanticValidationError):
+            ChunkConfig(markdown_heading_level=7)
+
+
+# ---------------------------------------------------------------------------
+# PipelineConfig
+# ---------------------------------------------------------------------------
+
+
+class TestPipelineConfigValidation:
+    def test_defaults(self) -> None:
+        config = PipelineConfig()
+        assert config.collection == "default"
+        assert config.concurrency == 4
+        assert isinstance(config.exclude_patterns, list)
+
+    def test_empty_collection_raises_validation_error(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            PipelineConfig(collection="")
+
+    def test_zero_concurrency_raises_validation_error(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            PipelineConfig(concurrency=0)
+
+    def test_custom_patterns(self) -> None:
+        config = PipelineConfig(
+            include_patterns=["*.py", "*.md"],
+            exclude_patterns=["__pycache__"],
         )
-        monkeypatch.setitem(sys.modules, "torch", fake_torch)
-
-        monkeypatch.setenv("EMBEDDY_MODEL_PATH", "/env/model")
-        monkeypatch.setenv("EMBEDDY_NORMALIZE_EMBEDDINGS", "not-a-bool")
-
-        with pytest.raises(EmbeddyValidationError):
-            EmbedderConfig.from_env()
+        assert config.include_patterns == ["*.py", "*.md"]
+        assert config.exclude_patterns == ["__pycache__"]
 
 
-class TestRuntimeConfigValidation:
-    def test_default_runtime_config_values(self) -> None:
-        config = RuntimeConfig()
+# ---------------------------------------------------------------------------
+# ServerConfig
+# ---------------------------------------------------------------------------
 
-        assert config.batch_size == 32
-        assert config.show_progress_bar is False
-        assert config.enable_cache is False
-        assert config.convert_to_numpy is False
 
-    def test_batch_size_less_than_one_raises_validation_error(self) -> None:
+class TestServerConfigValidation:
+    def test_defaults(self) -> None:
+        config = ServerConfig()
+        assert config.host == "127.0.0.1"
+        assert config.port == 8585
+        assert config.workers == 1
+        assert config.log_level == "info"
+
+    def test_invalid_port_raises_validation_error(self) -> None:
         with pytest.raises(PydanticValidationError):
-            RuntimeConfig(batch_size=0)
-
+            ServerConfig(port=0)
         with pytest.raises(PydanticValidationError):
-            RuntimeConfig(batch_size=-1)
+            ServerConfig(port=70000)
 
-    def test_cache_numpy_incompatible_logs_warning(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        caplog.set_level("WARNING", logger="embeddy.config")
+    def test_zero_workers_raises_validation_error(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            ServerConfig(workers=0)
 
-        RuntimeConfig(enable_cache=True, convert_to_numpy=True)
+    def test_invalid_log_level_raises_validation_error(self) -> None:
+        with pytest.raises(PydanticValidationError):
+            ServerConfig(log_level="verbose")
 
-        warnings = [
-            record
-            for record in caplog.records
-            if record.levelname == "WARNING"
-            and "enable_cache=True is incompatible with convert_to_numpy=True"
-            in record.getMessage()
-        ]
-        assert warnings, "Expected warning about cache/NumPy incompatibility."
+    def test_log_level_case_insensitive(self) -> None:
+        config = ServerConfig(log_level="DEBUG")
+        assert config.log_level == "debug"
 
 
-class TestRuntimeConfigFromEnv:
-    def test_from_env_uses_defaults_when_unset(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv("EMBEDDY_BATCH_SIZE", raising=False)
-        monkeypatch.delenv("EMBEDDY_SHOW_PROGRESS_BAR", raising=False)
-        monkeypatch.delenv("EMBEDDY_ENABLE_CACHE", raising=False)
-        monkeypatch.delenv("EMBEDDY_CONVERT_TO_NUMPY", raising=False)
+# ---------------------------------------------------------------------------
+# EmbeddyConfig (top-level)
+# ---------------------------------------------------------------------------
 
-        config = RuntimeConfig.from_env()
 
-        assert config.batch_size == 32
-        assert config.show_progress_bar is False
-        assert config.enable_cache is False
-        assert config.convert_to_numpy is False
+class TestEmbeddyConfig:
+    def test_defaults(self) -> None:
+        config = EmbeddyConfig()
+        assert isinstance(config.embedder, EmbedderConfig)
+        assert isinstance(config.store, StoreConfig)
+        assert isinstance(config.chunk, ChunkConfig)
+        assert isinstance(config.pipeline, PipelineConfig)
+        assert isinstance(config.server, ServerConfig)
 
-    def test_from_env_parses_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("EMBEDDY_BATCH_SIZE", "16")
-        monkeypatch.setenv("EMBEDDY_SHOW_PROGRESS_BAR", "1")
-        monkeypatch.setenv("EMBEDDY_ENABLE_CACHE", "true")
-        monkeypatch.setenv("EMBEDDY_CONVERT_TO_NUMPY", "0")
+    def test_nested_override(self) -> None:
+        config = EmbeddyConfig(
+            embedder=EmbedderConfig(model_name="custom/model"),
+            store=StoreConfig(db_path="/custom.db"),
+        )
+        assert config.embedder.model_name == "custom/model"
+        assert config.store.db_path == "/custom.db"
 
-        config = RuntimeConfig.from_env()
 
-        assert config.batch_size == 16
-        assert config.show_progress_bar is True
-        assert config.enable_cache is True
-        assert config.convert_to_numpy is False
-
-    def test_from_env_invalid_batch_size_raises_validation_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("EMBEDDY_BATCH_SIZE", "not-an-int")
-
-        with pytest.raises(EmbeddyValidationError):
-            RuntimeConfig.from_env()
-
-    def test_from_env_invalid_boolean_raises_validation_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("EMBEDDY_ENABLE_CACHE", "maybe")
-
-        with pytest.raises(EmbeddyValidationError):
-            RuntimeConfig.from_env()
-
+# ---------------------------------------------------------------------------
+# Config file loading
+# ---------------------------------------------------------------------------
 
 
 class TestConfigFileLoading:
-    """Tests for loading configuration from YAML/JSON files."""
-
     def _fixture_path(self, filename: str) -> Path:
         return Path(__file__).parent / "fixtures" / "configs" / filename
 
     def test_load_yaml_config(self) -> None:
-        model_cfg, runtime_cfg = load_config_file(str(self._fixture_path("valid.yaml")))
+        config = load_config_file(str(self._fixture_path("valid.yaml")))
 
-        assert model_cfg.model_path == "/models/all-MiniLM-L6-v2"
-        assert model_cfg.device == "cpu"
-        assert model_cfg.normalize_embeddings is True
-        assert model_cfg.trust_remote_code is False
-
-        assert runtime_cfg.batch_size == 16
-        assert runtime_cfg.show_progress_bar is True
-        assert runtime_cfg.enable_cache is True
-        assert runtime_cfg.convert_to_numpy is False
+        assert isinstance(config, EmbeddyConfig)
+        assert config.embedder.model_name == "Qwen/Qwen3-VL-Embedding-2B"
+        assert config.embedder.torch_dtype == "float32"
+        assert config.embedder.batch_size == 16
+        assert config.store.db_path == "test.db"
+        assert config.chunk.strategy == "auto"
+        assert config.pipeline.collection == "test-collection"
+        assert config.server.port == 8585
 
     def test_load_json_config(self) -> None:
-        model_cfg, runtime_cfg = load_config_file(str(self._fixture_path("valid.json")))
+        config = load_config_file(str(self._fixture_path("valid.json")))
 
-        assert model_cfg.model_path == "/models/all-MiniLM-L6-v2"
-        assert runtime_cfg.batch_size == 16
-
-    def test_env_overrides_file_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        path = self._fixture_path("valid.yaml")
-        monkeypatch.setenv("EMBEDDY_MODEL_PATH", "/override/model")
-        monkeypatch.setenv("EMBEDDY_BATCH_SIZE", "64")
-
-        model_cfg, runtime_cfg = load_config_file(str(path))
-
-        assert model_cfg.model_path == "/override/model"
-        assert runtime_cfg.batch_size == 64
-
-    def test_uses_env_config_path_when_no_path_provided(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        path = self._fixture_path("valid.yaml")
-        monkeypatch.setenv("EMBEDDY_CONFIG_PATH", str(path))
-
-        model_cfg, runtime_cfg = load_config_file()
-
-        assert model_cfg.model_path == "/models/all-MiniLM-L6-v2"
-        assert runtime_cfg.batch_size == 16
+        assert isinstance(config, EmbeddyConfig)
+        assert config.embedder.model_name == "Qwen/Qwen3-VL-Embedding-2B"
+        assert config.embedder.batch_size == 16
+        assert config.store.db_path == "test.db"
 
     def test_missing_config_file_raises_file_not_found(self) -> None:
-        missing = self._fixture_path("does-not-exist.yaml")
-
         with pytest.raises(FileNotFoundError):
-            load_config_file(str(missing))
+            load_config_file(str(self._fixture_path("does-not-exist.yaml")))
 
     def test_malformed_config_raises_validation_error(self) -> None:
-        malformed = self._fixture_path("invalid.yaml")
-
         with pytest.raises(EmbeddyValidationError):
-            load_config_file(str(malformed))
+            load_config_file(str(self._fixture_path("invalid.yaml")))
 
+    def test_no_path_and_no_env_raises_validation_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("EMBEDDY_CONFIG_PATH", raising=False)
+        with pytest.raises(EmbeddyValidationError):
+            load_config_file()
+
+    def test_uses_env_config_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        path = self._fixture_path("valid.yaml")
+        monkeypatch.setenv("EMBEDDY_CONFIG_PATH", str(path))
+        config = load_config_file()
+        assert config.embedder.model_name == "Qwen/Qwen3-VL-Embedding-2B"
+
+    def test_json_file_with_partial_config(self, tmp_path: Path) -> None:
+        """Loading a config with only some sections should use defaults for the rest."""
+        partial = {"embedder": {"model_name": "custom/model"}}
+        config_path = tmp_path / "partial.json"
+        config_path.write_text(json.dumps(partial))
+
+        config = load_config_file(str(config_path))
+        assert config.embedder.model_name == "custom/model"
+        assert config.store.db_path == "embeddy.db"  # default
+        assert config.chunk.strategy == "auto"  # default

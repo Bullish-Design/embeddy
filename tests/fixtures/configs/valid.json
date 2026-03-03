@@ -1,14 +1,32 @@
 {
-  "model": {
-    "path": "/models/all-MiniLM-L6-v2",
+  "embedder": {
+    "model_name": "Qwen/Qwen3-VL-Embedding-2B",
     "device": "cpu",
-    "normalize_embeddings": true,
-    "trust_remote_code": false
-  },
-  "runtime": {
+    "torch_dtype": "float32",
+    "embedding_dimension": 2048,
+    "max_length": 8192,
     "batch_size": 16,
-    "show_progress_bar": true,
-    "enable_cache": true,
-    "convert_to_numpy": false
+    "normalize": true,
+    "trust_remote_code": true,
+    "lru_cache_size": 512
+  },
+  "store": {
+    "db_path": "test.db",
+    "wal_mode": true
+  },
+  "chunk": {
+    "strategy": "auto",
+    "max_tokens": 512,
+    "overlap_tokens": 64
+  },
+  "pipeline": {
+    "collection": "test-collection",
+    "concurrency": 2
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8585,
+    "workers": 1,
+    "log_level": "info"
   }
 }

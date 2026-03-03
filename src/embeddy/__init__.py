@@ -1,52 +1,95 @@
 # src/embeddy/__init__.py
-from __future__ import annotations
+"""Public package interface for embeddy.
 
-"""Public package interface for Embeddy.
-
-This module defines the public API surface that consumers are expected to
-import from. It re-exports the core configuration models, the main
-:class:`Embedder` type, result models, and the custom exception hierarchy.
-
-Example
--------
->>> from embeddy import Embedder, EmbedderConfig
->>> config = EmbedderConfig(model_path="/models/test-model")
->>> embedder = Embedder(config=config)
+Re-exports the core types, configuration, and exceptions that consumers
+are expected to import from the top-level package.
 """
 
-from embeddy.config import EmbedderConfig, RuntimeConfig, load_config_file
-from embeddy.embedder import Embedder
+from __future__ import annotations
+
+from embeddy.config import (
+    ChunkConfig,
+    EmbedderConfig,
+    EmbeddyConfig,
+    PipelineConfig,
+    ServerConfig,
+    StoreConfig,
+    load_config_file,
+)
 from embeddy.exceptions import (
+    ChunkingError,
     EmbeddyError,
     EncodingError,
+    IngestError,
     ModelLoadError,
     SearchError,
+    ServerError,
+    StoreError,
     ValidationError,
 )
 from embeddy.models import (
+    Chunk,
+    Collection,
+    CollectionStats,
+    ContentType,
+    DistanceMetric,
+    EmbedInput,
     Embedding,
-    EmbeddingResult,
+    FusionStrategy,
+    IngestResult,
+    IngestStats,
+    SearchFilters,
+    SearchMode,
     SearchResult,
     SearchResults,
     SimilarityScore,
+    SourceMetadata,
 )
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 __all__ = [
-    "Embedder",
+    # Version
+    "__version__",
+    # Config
     "EmbedderConfig",
-    "RuntimeConfig",
+    "StoreConfig",
+    "ChunkConfig",
+    "PipelineConfig",
+    "ServerConfig",
+    "EmbeddyConfig",
     "load_config_file",
+    # Models - enums
+    "ContentType",
+    "SearchMode",
+    "FusionStrategy",
+    "DistanceMetric",
+    # Models - embedding
+    "EmbedInput",
     "Embedding",
-    "EmbeddingResult",
+    "SimilarityScore",
+    # Models - ingestion
+    "SourceMetadata",
+    "IngestResult",
+    # Models - chunks
+    "Chunk",
+    # Models - collections
+    "Collection",
+    "CollectionStats",
+    # Models - search
+    "SearchFilters",
     "SearchResult",
     "SearchResults",
-    "SimilarityScore",
+    # Models - pipeline
+    "IngestStats",
+    # Exceptions
     "EmbeddyError",
     "ModelLoadError",
     "EncodingError",
     "ValidationError",
     "SearchError",
-    "__version__",
+    "IngestError",
+    "StoreError",
+    "ChunkingError",
+    "ServerError",
 ]

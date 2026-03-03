@@ -1,378 +1,488 @@
 # src/embeddy/config.py
+"""Configuration models for embeddy.
+
+All configuration is managed through Pydantic v2 BaseModels with validators.
+Supports loading from YAML/JSON files, environment variables, and programmatic
+construction. Environment variables override file values.
+"""
+
 from __future__ import annotations
 
-import os
-import re
-import logging
 import json
+import logging
+import os
 from pathlib import Path
 from typing import Any
 
-import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from embeddy.exceptions import ValidationError as EmbeddyValidationError
 
+logger = logging.getLogger(__name__)
 
 _BOOL_TRUE_VALUES: set[str] = {"1", "true", "yes", "on"}
 _BOOL_FALSE_VALUES: set[str] = {"0", "false", "no", "off"}
 
 
-class EmbedderConfig(BaseModel):
-    """Configuration for SentenceTransformer model initialization.
+def _parse_bool_env(raw: str, env_name: str) -> bool:
+    """Parse a boolean value from an environment variable string."""
+    lowered = raw.strip().lower()
+    if lowered in _BOOL_TRUE_VALUES:
+        return True
+    if lowered in _BOOL_FALSE_VALUES:
+        return False
+    raise EmbeddyValidationError(f"Invalid boolean value {raw!r} for environment variable {env_name}.")
 
-    This model validates all parameters required to load a SentenceTransformer
-    model. Validation happens before any attempt to load the model, enabling
-    fail-fast behaviour and clear error messages.
+
+# ---------------------------------------------------------------------------
+# Embedder config (Qwen3-VL-Embedding-2B)
+# ---------------------------------------------------------------------------
+
+
+class EmbedderConfig(BaseModel):
+    """Configuration for the embedding model.
+
+    Targets Qwen3-VL-Embedding-2B by default. Supports multimodal inputs
+    (text, images, video) with instruction-aware encoding.
     """
 
-    model_path: str = Field(
-        description="Path to a pre-downloaded Sentence Transformer model."
+    model_name: str = Field(
+        default="Qwen/Qwen3-VL-Embedding-2B",
+        description="HuggingFace model identifier or local path.",
     )
-    device: str = Field(
-        default="cpu",
-        description="Device identifier: 'cpu', 'cuda', or 'cuda:N'.",
+    device: str | None = Field(
+        default=None,
+        description="Device: 'cpu', 'cuda', 'cuda:N', 'mps', or None for auto-detect.",
     )
-    normalize_embeddings: bool = Field(
+    torch_dtype: str = Field(
+        default="bfloat16",
+        description="Torch dtype for model weights: 'float32', 'float16', 'bfloat16'.",
+    )
+    attn_implementation: str | None = Field(
+        default=None,
+        description="Attention implementation: None (auto), 'flash_attention_2', 'sdpa', 'eager'.",
+    )
+    embedding_dimension: int = Field(
+        default=2048,
+        description="Output embedding dimension. MRL supports 64-2048.",
+    )
+    max_length: int = Field(
+        default=8192,
+        description="Max token sequence length for inputs.",
+    )
+    batch_size: int = Field(
+        default=8,
+        description="Number of inputs to encode per batch.",
+    )
+    cache_dir: str | None = Field(
+        default=None,
+        description="Directory for model download cache.",
+    )
+    normalize: bool = Field(
         default=True,
-        description="Whether to L2-normalize embedding vectors produced by the model.",
+        description="Whether to L2-normalize embedding vectors.",
+    )
+    document_instruction: str = Field(
+        default="Represent the user's input.",
+        description="Default instruction prepended to document inputs.",
+    )
+    query_instruction: str = Field(
+        default="Retrieve relevant documents, images, or text for the user's query.",
+        description="Default instruction prepended to query inputs.",
     )
     trust_remote_code: bool = Field(
-        default=False,
-        description="Whether to trust remote code when loading models with custom architectures.",
+        default=True,
+        description="Whether to trust remote code when loading model. Required for Qwen3-VL.",
+    )
+    # Image processing
+    min_pixels: int = Field(default=4096, description="Minimum pixel count for image inputs.")
+    max_pixels: int = Field(default=1843200, description="Maximum pixel count for image inputs (1280x1440).")
+    # LRU cache
+    lru_cache_size: int = Field(
+        default=1024,
+        description="Max entries in the embedder's in-memory LRU cache. 0 to disable.",
     )
 
-    @field_validator("model_path")
+    @field_validator("model_name")
     @classmethod
-    def validate_model_path(cls, value: str) -> str:
-        """Ensure ``model_path`` is a non-empty string.
-
-        Existence of the path is validated later when the model is actually
-        loaded; here we only guard against obviously invalid values.
-        """
-        if not isinstance(value, str):
-            raise ValueError("model_path must be a string")
+    def validate_model_name(cls, value: str) -> str:
         if not value.strip():
-            raise ValueError("model_path must be a non-empty string")
+            raise ValueError("model_name must be a non-empty string")
         return value
 
-    @field_validator("device")
+    @field_validator("torch_dtype")
     @classmethod
-    def validate_device(cls, value: str) -> str:
-        """Validate the device string and, for CUDA, check availability.
-
-        Accepted formats are:
-
-        * ``"cpu"``
-        * ``"cuda"``
-        * ``"cuda:N"`` where ``N`` is a non-negative integer.
-        """
-        if not isinstance(value, str):
-            raise ValueError("device must be a string")
-
-        pattern = r"^(cpu|cuda|cuda:\\d+)$"
-        if re.match(pattern, value) is None:
-            raise ValueError(
-                f"Invalid device value: {value!r}. Expected 'cpu', 'cuda', or 'cuda:N'."
-            )
-
-        if value.startswith("cuda"):
-            try:
-                import torch  # type: ignore[import-not-found]
-            except Exception as exc:  # pragma: no cover - import failure path
-                raise ValueError(
-                    "CUDA device requested but PyTorch with CUDA support is not available."
-                ) from exc
-
-            if not torch.cuda.is_available():  # type: ignore[attr-defined]
-                raise ValueError(
-                    "CUDA device requested but CUDA is not available on this system."
-                )
-
+    def validate_torch_dtype(cls, value: str) -> str:
+        allowed = {"float32", "float16", "bfloat16"}
+        if value not in allowed:
+            raise ValueError(f"torch_dtype must be one of {sorted(allowed)}, got {value!r}")
         return value
 
+    @field_validator("attn_implementation")
     @classmethod
-    def _parse_bool_env(cls, raw: str, env_name: str) -> bool:
-        """Parse a boolean value from an environment variable string.
+    def validate_attn_implementation(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        allowed = {"flash_attention_2", "sdpa", "eager"}
+        if value not in allowed:
+            raise ValueError(f"attn_implementation must be one of {sorted(allowed)} or None, got {value!r}")
+        return value
 
-        Values are parsed case-insensitively using a small set of common
-        representations. If the value cannot be interpreted as a boolean,
-        an Embeddy :class:`ValidationError` is raised.
-        """
-        lowered = raw.strip().lower()
-        if lowered in _BOOL_TRUE_VALUES:
-            return True
-        if lowered in _BOOL_FALSE_VALUES:
-            return False
+    @field_validator("embedding_dimension")
+    @classmethod
+    def validate_embedding_dimension(cls, value: int) -> int:
+        if value < 1 or value > 2048:
+            raise ValueError(f"embedding_dimension must be between 1 and 2048, got {value}")
+        return value
 
-        raise EmbeddyValidationError(
-            f"Invalid boolean value {raw!r} for environment variable {env_name}."
-        )
+    @field_validator("batch_size")
+    @classmethod
+    def validate_batch_size(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("batch_size must be at least 1")
+        return value
+
+    @field_validator("max_length")
+    @classmethod
+    def validate_max_length(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("max_length must be at least 1")
+        return value
+
+    @field_validator("lru_cache_size")
+    @classmethod
+    def validate_lru_cache_size(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("lru_cache_size must be non-negative")
+        return value
 
     @classmethod
     def from_env(cls) -> EmbedderConfig:
         """Construct configuration from environment variables.
 
-        Environment variables:
-            EMBEDDY_MODEL_PATH (required)
-            EMBEDDY_DEVICE (optional, defaults to "cpu")
-            EMBEDDY_NORMALIZE_EMBEDDINGS (optional, defaults to "true")
-            EMBEDDY_TRUST_REMOTE_CODE (optional, defaults to "false")
-
-        Returns:
-            A validated :class:`EmbedderConfig` instance.
-
-        Raises:
-            EmbeddyValidationError: If required variables are missing or
-                contain invalid values.
-        """
-        model_path = os.getenv("EMBEDDY_MODEL_PATH")
-        if model_path is None or not model_path.strip():
-            raise EmbeddyValidationError(
-                "EMBEDDY_MODEL_PATH must be set to use EmbedderConfig.from_env()."
-            )
-
-        device = os.getenv("EMBEDDY_DEVICE", "cpu")
-
-        normalize_raw = os.getenv("EMBEDDY_NORMALIZE_EMBEDDINGS", "true")
-        trust_raw = os.getenv("EMBEDDY_TRUST_REMOTE_CODE", "false")
-
-        normalize = cls._parse_bool_env(
-            normalize_raw, "EMBEDDY_NORMALIZE_EMBEDDINGS"
-        )
-        trust_remote = cls._parse_bool_env(trust_raw, "EMBEDDY_TRUST_REMOTE_CODE")
-
-        try:
-            return cls(
-                model_path=model_path,
-                device=device,
-                normalize_embeddings=normalize,
-                trust_remote_code=trust_remote,
-            )
-        except Exception as exc:
-            # Wrap any underlying Pydantic validation error with a domain-level error.
-            raise EmbeddyValidationError(
-                f"Invalid Embedder configuration from environment: {exc}"
-            ) from exc
-
-
-class RuntimeConfig(BaseModel):
-    """Configuration for runtime execution behaviour.
-
-    This model controls batch processing, progress reporting, caching and output
-    format. It is intentionally separate from :class:`EmbedderConfig` so that
-    runtime concerns can be tuned independently of model loading.
-    """
-
-    batch_size: int = Field(
-        default=32,
-        description="Number of texts to encode per batch.",
-    )
-    show_progress_bar: bool = Field(
-        default=False,
-        description="Whether to display a progress bar for batch operations.",
-    )
-    enable_cache: bool = Field(
-        default=False,
-        description="Cache encoded texts to avoid recomputation.",
-    )
-    convert_to_numpy: bool = Field(
-        default=False,
-        description="Return embeddings as numpy.ndarray instead of list[float].",
-    )
-
-    @field_validator("batch_size")
-    @classmethod
-    def validate_batch_size(cls, value: int) -> int:
-        """Ensure ``batch_size`` is at least one."""
-        if value < 1:
-            raise ValueError("batch_size must be at least 1")
-        return value
-
-    @model_validator(mode="after")
-    def warn_cache_numpy_incompatible(self) -> "RuntimeConfig":
-        """Emit warning when cache and numpy output are requested together."""
-        if self.enable_cache and self.convert_to_numpy:
-            logging.getLogger(__name__).warning(
-                "RuntimeConfig: enable_cache=True is incompatible with "
-                "convert_to_numpy=True; caching will be disabled."
-            )
-        return self
-
-    @classmethod
-    def from_env(cls) -> "RuntimeConfig":
-        """Construct runtime configuration from environment variables.
-
-        Environment variables:
-            EMBEDDY_BATCH_SIZE (optional)
-            EMBEDDY_SHOW_PROGRESS_BAR (optional boolean)
-            EMBEDDY_ENABLE_CACHE (optional boolean)
-            EMBEDDY_CONVERT_TO_NUMPY (optional boolean)
+        All fields can be overridden via EMBEDDY_* environment variables:
+            EMBEDDY_MODEL_NAME, EMBEDDY_DEVICE, EMBEDDY_TORCH_DTYPE,
+            EMBEDDY_EMBEDDING_DIMENSION, EMBEDDY_MAX_LENGTH,
+            EMBEDDY_BATCH_SIZE, EMBEDDY_NORMALIZE, EMBEDDY_CACHE_DIR,
+            EMBEDDY_TRUST_REMOTE_CODE, EMBEDDY_LRU_CACHE_SIZE
         """
         kwargs: dict[str, Any] = {}
 
-        batch_raw = os.getenv("EMBEDDY_BATCH_SIZE")
-        if batch_raw is not None:
+        env_model = os.getenv("EMBEDDY_MODEL_NAME")
+        if env_model is not None:
+            kwargs["model_name"] = env_model
+
+        env_device = os.getenv("EMBEDDY_DEVICE")
+        if env_device is not None:
+            kwargs["device"] = env_device
+
+        env_dtype = os.getenv("EMBEDDY_TORCH_DTYPE")
+        if env_dtype is not None:
+            kwargs["torch_dtype"] = env_dtype
+
+        env_dim = os.getenv("EMBEDDY_EMBEDDING_DIMENSION")
+        if env_dim is not None:
             try:
-                kwargs["batch_size"] = int(batch_raw)
-            except ValueError as exc:  # pragma: no cover - edge parsing path
+                kwargs["embedding_dimension"] = int(env_dim)
+            except ValueError as exc:
                 raise EmbeddyValidationError(
-                    f"Invalid integer value {batch_raw!r} for EMBEDDY_BATCH_SIZE."
+                    f"Invalid integer value {env_dim!r} for EMBEDDY_EMBEDDING_DIMENSION."
                 ) from exc
 
-        def _apply_bool(raw: str | None, env_name: str, key: str) -> None:
-            if raw is None:
-                return
-            kwargs[key] = EmbedderConfig._parse_bool_env(raw, env_name)
+        env_max_len = os.getenv("EMBEDDY_MAX_LENGTH")
+        if env_max_len is not None:
+            try:
+                kwargs["max_length"] = int(env_max_len)
+            except ValueError as exc:
+                raise EmbeddyValidationError(f"Invalid integer value {env_max_len!r} for EMBEDDY_MAX_LENGTH.") from exc
 
-        _apply_bool(
-            os.getenv("EMBEDDY_SHOW_PROGRESS_BAR"),
-            "EMBEDDY_SHOW_PROGRESS_BAR",
-            "show_progress_bar",
-        )
-        _apply_bool(
-            os.getenv("EMBEDDY_ENABLE_CACHE"),
-            "EMBEDDY_ENABLE_CACHE",
-            "enable_cache",
-        )
-        _apply_bool(
-            os.getenv("EMBEDDY_CONVERT_TO_NUMPY"),
-            "EMBEDDY_CONVERT_TO_NUMPY",
-            "convert_to_numpy",
-        )
+        env_batch = os.getenv("EMBEDDY_BATCH_SIZE")
+        if env_batch is not None:
+            try:
+                kwargs["batch_size"] = int(env_batch)
+            except ValueError as exc:
+                raise EmbeddyValidationError(f"Invalid integer value {env_batch!r} for EMBEDDY_BATCH_SIZE.") from exc
+
+        env_normalize = os.getenv("EMBEDDY_NORMALIZE")
+        if env_normalize is not None:
+            kwargs["normalize"] = _parse_bool_env(env_normalize, "EMBEDDY_NORMALIZE")
+
+        env_cache_dir = os.getenv("EMBEDDY_CACHE_DIR")
+        if env_cache_dir is not None:
+            kwargs["cache_dir"] = env_cache_dir
+
+        env_trust = os.getenv("EMBEDDY_TRUST_REMOTE_CODE")
+        if env_trust is not None:
+            kwargs["trust_remote_code"] = _parse_bool_env(env_trust, "EMBEDDY_TRUST_REMOTE_CODE")
+
+        env_lru = os.getenv("EMBEDDY_LRU_CACHE_SIZE")
+        if env_lru is not None:
+            try:
+                kwargs["lru_cache_size"] = int(env_lru)
+            except ValueError as exc:
+                raise EmbeddyValidationError(f"Invalid integer value {env_lru!r} for EMBEDDY_LRU_CACHE_SIZE.") from exc
 
         try:
             return cls(**kwargs)
         except Exception as exc:
-            raise EmbeddyValidationError(
-                f"Invalid Runtime configuration from environment: {exc}"
-            ) from exc
+            raise EmbeddyValidationError(f"Invalid Embedder configuration from environment: {exc}") from exc
 
 
+# ---------------------------------------------------------------------------
+# Store config
+# ---------------------------------------------------------------------------
 
-def load_config_file(path: str | None = None) -> tuple[EmbedderConfig, RuntimeConfig]:
+
+class StoreConfig(BaseModel):
+    """Configuration for the vector store (sqlite-vec + FTS5)."""
+
+    db_path: str = Field(
+        default="embeddy.db",
+        description="Path to the SQLite database file.",
+    )
+    wal_mode: bool = Field(
+        default=True,
+        description="Enable WAL journal mode for concurrent reads.",
+    )
+
+    @field_validator("db_path")
+    @classmethod
+    def validate_db_path(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("db_path must be a non-empty string")
+        return value
+
+
+# ---------------------------------------------------------------------------
+# Chunk config
+# ---------------------------------------------------------------------------
+
+
+class ChunkConfig(BaseModel):
+    """Configuration for document chunking."""
+
+    strategy: str = Field(
+        default="auto",
+        description="Chunking strategy: 'auto', 'python', 'markdown', 'paragraph', 'token_window', 'docling'.",
+    )
+    max_tokens: int = Field(default=512, description="Max tokens per chunk.")
+    overlap_tokens: int = Field(default=64, description="Token overlap for sliding window strategy.")
+    merge_short: bool = Field(default=True, description="Merge paragraphs shorter than min_tokens.")
+    min_tokens: int = Field(default=64, description="Minimum chunk size before merging.")
+    python_granularity: str = Field(
+        default="function",
+        description="Python chunking granularity: 'function', 'class', 'module'.",
+    )
+    markdown_heading_level: int = Field(
+        default=2,
+        description="Split markdown at this heading level.",
+    )
+
+    @field_validator("strategy")
+    @classmethod
+    def validate_strategy(cls, value: str) -> str:
+        allowed = {"auto", "python", "markdown", "paragraph", "token_window", "docling"}
+        if value not in allowed:
+            raise ValueError(f"strategy must be one of {sorted(allowed)}, got {value!r}")
+        return value
+
+    @field_validator("max_tokens")
+    @classmethod
+    def validate_max_tokens(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("max_tokens must be at least 1")
+        return value
+
+    @field_validator("overlap_tokens")
+    @classmethod
+    def validate_overlap_tokens(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("overlap_tokens must be non-negative")
+        return value
+
+    @field_validator("python_granularity")
+    @classmethod
+    def validate_python_granularity(cls, value: str) -> str:
+        allowed = {"function", "class", "module"}
+        if value not in allowed:
+            raise ValueError(f"python_granularity must be one of {sorted(allowed)}, got {value!r}")
+        return value
+
+    @field_validator("markdown_heading_level")
+    @classmethod
+    def validate_markdown_heading_level(cls, value: int) -> int:
+        if value < 1 or value > 6:
+            raise ValueError(f"markdown_heading_level must be 1-6, got {value}")
+        return value
+
+    @model_validator(mode="after")
+    def validate_overlap_less_than_max(self) -> ChunkConfig:
+        if self.overlap_tokens >= self.max_tokens:
+            raise ValueError(f"overlap_tokens ({self.overlap_tokens}) must be less than max_tokens ({self.max_tokens})")
+        return self
+
+
+# ---------------------------------------------------------------------------
+# Pipeline config
+# ---------------------------------------------------------------------------
+
+
+class PipelineConfig(BaseModel):
+    """Configuration for the ingest pipeline."""
+
+    collection: str = Field(
+        default="default",
+        description="Default collection name for ingested content.",
+    )
+    concurrency: int = Field(
+        default=4,
+        description="Max concurrent file processing tasks during directory ingest.",
+    )
+    include_patterns: list[str] = Field(
+        default_factory=list,
+        description="Glob patterns to include during directory ingest.",
+    )
+    exclude_patterns: list[str] = Field(
+        default_factory=lambda: [
+            ".*",
+            "__pycache__",
+            "node_modules",
+            ".git",
+            "*.pyc",
+            "*.pyo",
+        ],
+        description="Glob patterns to exclude during directory ingest.",
+    )
+
+    @field_validator("collection")
+    @classmethod
+    def validate_collection(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("collection name must be non-empty")
+        return value
+
+    @field_validator("concurrency")
+    @classmethod
+    def validate_concurrency(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("concurrency must be at least 1")
+        return value
+
+
+# ---------------------------------------------------------------------------
+# Server config
+# ---------------------------------------------------------------------------
+
+
+class ServerConfig(BaseModel):
+    """Configuration for the HTTP server."""
+
+    host: str = Field(default="127.0.0.1", description="Host to bind to.")
+    port: int = Field(default=8585, description="Port to bind to.")
+    workers: int = Field(default=1, description="Number of uvicorn worker processes.")
+    log_level: str = Field(default="info", description="Logging level.")
+    cors_origins: list[str] = Field(
+        default_factory=lambda: ["*"],
+        description="CORS allowed origins.",
+    )
+
+    @field_validator("port")
+    @classmethod
+    def validate_port(cls, value: int) -> int:
+        if value < 1 or value > 65535:
+            raise ValueError(f"port must be 1-65535, got {value}")
+        return value
+
+    @field_validator("workers")
+    @classmethod
+    def validate_workers(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("workers must be at least 1")
+        return value
+
+    @field_validator("log_level")
+    @classmethod
+    def validate_log_level(cls, value: str) -> str:
+        allowed = {"debug", "info", "warning", "error", "critical"}
+        if value.lower() not in allowed:
+            raise ValueError(f"log_level must be one of {sorted(allowed)}, got {value!r}")
+        return value.lower()
+
+
+# ---------------------------------------------------------------------------
+# Top-level config
+# ---------------------------------------------------------------------------
+
+
+class EmbeddyConfig(BaseModel):
+    """Top-level configuration combining all sub-configs."""
+
+    embedder: EmbedderConfig = Field(default_factory=EmbedderConfig)
+    store: StoreConfig = Field(default_factory=StoreConfig)
+    chunk: ChunkConfig = Field(default_factory=ChunkConfig)
+    pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
+    server: ServerConfig = Field(default_factory=ServerConfig)
+
+
+# ---------------------------------------------------------------------------
+# Config file loading
+# ---------------------------------------------------------------------------
+
+
+def load_config_file(path: str | None = None) -> EmbeddyConfig:
     """Load configuration from a YAML or JSON file.
 
-    The configuration file is expected to use a nested structure with ``model``
-    and ``runtime`` sections. Environment variables can override values loaded
-    from the file.
+    The configuration file uses a nested structure with optional sections:
+    ``embedder``, ``store``, ``chunk``, ``pipeline``, ``server``.
+
+    Environment variables override file values for embedder config.
 
     Args:
-        path: Optional path to the configuration file. When ``None``, the
-            function falls back to the ``EMBEDDY_CONFIG_PATH`` environment
-            variable.
+        path: Path to the configuration file. Falls back to
+            ``EMBEDDY_CONFIG_PATH`` env var if not provided.
 
     Returns:
-        A tuple of (:class:`EmbedderConfig`, :class:`RuntimeConfig`).
-
-    Raises:
-        FileNotFoundError: If the configuration file does not exist.
-        EmbeddyValidationError: If the configuration cannot be parsed or
-            has an unexpected structure.
+        A validated :class:`EmbeddyConfig` instance.
     """
     config_path_str = path or os.getenv("EMBEDDY_CONFIG_PATH")
     if not config_path_str:
-        raise EmbeddyValidationError(
-            "No configuration path provided and EMBEDDY_CONFIG_PATH is not set."
-        )
+        raise EmbeddyValidationError("No configuration path provided and EMBEDDY_CONFIG_PATH is not set.")
 
     config_path = Path(config_path_str)
     if not config_path.is_file():
         raise FileNotFoundError(str(config_path))
 
     try:
+        raw_text = config_path.read_text()
         if config_path.suffix.lower() in {".yaml", ".yml"}:
-            loaded = yaml.safe_load(config_path.read_text())
+            try:
+                import yaml
+            except ImportError as exc:
+                raise EmbeddyValidationError(
+                    "PyYAML is required to load YAML config files. Install it with: pip install pyyaml"
+                ) from exc
+            loaded = yaml.safe_load(raw_text)
         elif config_path.suffix.lower() == ".json":
-            loaded = json.loads(config_path.read_text())
+            loaded = json.loads(raw_text)
         else:
-            # Prefer YAML parsing for unknown extensions; this mirrors typical
-            # config-file behaviour but still validates structure below.
-            loaded = yaml.safe_load(config_path.read_text())
-    except Exception as exc:  # pragma: no cover - parser specific failures
-        raise EmbeddyValidationError(
-            f"Failed to parse configuration file {config_path}: {exc}"
-        ) from exc
+            # Try YAML first, fall back to JSON
+            try:
+                import yaml
+
+                loaded = yaml.safe_load(raw_text)
+            except Exception:
+                loaded = json.loads(raw_text)
+    except EmbeddyValidationError:
+        raise
+    except Exception as exc:
+        raise EmbeddyValidationError(f"Failed to parse configuration file {config_path}: {exc}") from exc
 
     if not isinstance(loaded, dict):
-        raise EmbeddyValidationError(
-            "Configuration file must contain a mapping at the top level."
-        )
-
-    model_section = loaded.get("model", {})
-    runtime_section = loaded.get("runtime", {})
-
-    if not isinstance(model_section, dict) or not isinstance(runtime_section, dict):
-        raise EmbeddyValidationError(
-            "Configuration sections 'model' and 'runtime' must be mappings."
-        )
-
-    # Map file keys to EmbedderConfig fields.
-    model_kwargs: dict[str, Any] = {}
-    if "path" in model_section:
-        model_kwargs["model_path"] = model_section["path"]
-    if "model_path" in model_section:
-        model_kwargs["model_path"] = model_section["model_path"]
-    if "device" in model_section:
-        model_kwargs["device"] = model_section["device"]
-    if "normalize_embeddings" in model_section:
-        model_kwargs["normalize_embeddings"] = model_section["normalize_embeddings"]
-    if "trust_remote_code" in model_section:
-        model_kwargs["trust_remote_code"] = model_section["trust_remote_code"]
-
-    # Map file keys to RuntimeConfig fields.
-    runtime_kwargs: dict[str, Any] = {}
-    for key in ("batch_size", "show_progress_bar", "enable_cache", "convert_to_numpy"):
-        if key in runtime_section:
-            runtime_kwargs[key] = runtime_section[key]
-
-    # Apply environment overrides for model configuration.
-    env_model_path = os.getenv("EMBEDDY_MODEL_PATH")
-    if env_model_path is not None:
-        model_kwargs["model_path"] = env_model_path
-
-    env_device = os.getenv("EMBEDDY_DEVICE")
-    if env_device is not None:
-        model_kwargs["device"] = env_device
-
-    env_normalize = os.getenv("EMBEDDY_NORMALIZE_EMBEDDINGS")
-    if env_normalize is not None:
-        model_kwargs["normalize_embeddings"] = EmbedderConfig._parse_bool_env(
-            env_normalize, "EMBEDDY_NORMALIZE_EMBEDDINGS"
-        )
-
-    env_trust = os.getenv("EMBEDDY_TRUST_REMOTE_CODE")
-    if env_trust is not None:
-        model_kwargs["trust_remote_code"] = EmbedderConfig._parse_bool_env(
-            env_trust, "EMBEDDY_TRUST_REMOTE_CODE"
-        )
-
-    # Apply environment overrides for runtime configuration.
-    env_batch = os.getenv("EMBEDDY_BATCH_SIZE")
-    if env_batch is not None:
-        try:
-            runtime_kwargs["batch_size"] = int(env_batch)
-        except ValueError as exc:  # pragma: no cover - edge parsing path
-            raise EmbeddyValidationError(
-                f"Invalid integer value {env_batch!r} for EMBEDDY_BATCH_SIZE."
-            ) from exc
-
-    def _apply_bool_env(key: str, env_name: str) -> None:
-        raw = os.getenv(env_name)
-        if raw is None:
-            return
-        runtime_kwargs[key] = EmbedderConfig._parse_bool_env(raw, env_name)
-
-    _apply_bool_env("show_progress_bar", "EMBEDDY_SHOW_PROGRESS_BAR")
-    _apply_bool_env("enable_cache", "EMBEDDY_ENABLE_CACHE")
-    _apply_bool_env("convert_to_numpy", "EMBEDDY_CONVERT_TO_NUMPY")
+        raise EmbeddyValidationError("Configuration file must contain a mapping at the top level.")
 
     try:
-        model_config = EmbedderConfig(**model_kwargs)
-        runtime_config = RuntimeConfig(**runtime_kwargs)
+        config = EmbeddyConfig(**loaded)
     except Exception as exc:
-        raise EmbeddyValidationError(
-            f"Invalid configuration values in {config_path}: {exc}"
-        ) from exc
+        raise EmbeddyValidationError(f"Invalid configuration values in {config_path}: {exc}") from exc
 
-    return model_config, runtime_config
+    return config

@@ -212,6 +212,9 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
+# Scratch/planning files
+.scratch/
+
 # Devenv
 .devenv*
 devenv.local.nix
