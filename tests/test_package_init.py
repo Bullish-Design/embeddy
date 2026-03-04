@@ -1,5 +1,5 @@
 # tests/test_package_init.py
-"""Tests for the embeddy package's public import surface (v0.3.10)."""
+"""Tests for the embeddy package's public import surface (v0.3.11)."""
 
 from __future__ import annotations
 
@@ -138,7 +138,7 @@ class TestPublicAPI:
 
     def test_version_attribute_is_defined(self) -> None:
         assert isinstance(__version__, str)
-        assert __version__ == "0.3.10"
+        assert __version__ == "0.3.11"
 
     def test_all_contains_expected_names(self) -> None:
         public_names = set(getattr(embeddy, "__all__", []))
