@@ -1,6 +1,6 @@
 [project]
 name = "embeddy"
-version = "0.3.9"
+version = "0.3.10"
 description = "Async-native multimodal embedding, chunking, hybrid search, and RAG pipeline library."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -77,7 +77,7 @@ include = [
 
 [tool.pytest.ini_options]
 addopts = "-q --cov=embeddy --cov-report=term-missing"
-testpaths = ["tests"]
+testpaths = ["tests", "benchmarks"]
 asyncio_mode = "auto"
 
 [tool.mypy]
