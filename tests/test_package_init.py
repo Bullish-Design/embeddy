@@ -1,5 +1,5 @@
 # tests/test_package_init.py
-"""Tests for the embeddy package's public import surface (v0.3.7)."""
+"""Tests for the embeddy package's public import surface (v0.3.8)."""
 
 from __future__ import annotations
 
@@ -39,6 +39,8 @@ from embeddy import (
     SearchService,
     # Server layer
     create_app,
+    # Client layer
+    EmbeddyClient,
     # Models - enums
     ContentType,
     DistanceMetric,
@@ -91,6 +93,7 @@ from embeddy.ingest import is_docling_path as direct_is_docling_path
 from embeddy.pipeline import Pipeline as DirectPipeline
 from embeddy.search import SearchService as DirectSearchService
 from embeddy.server import create_app as direct_create_app
+from embeddy.client import EmbeddyClient as DirectEmbeddyClient
 
 
 class TestPublicAPI:
@@ -123,6 +126,9 @@ class TestPublicAPI:
     def test_top_level_reexports_server(self) -> None:
         assert create_app is direct_create_app
 
+    def test_top_level_reexports_client(self) -> None:
+        assert EmbeddyClient is DirectEmbeddyClient
+
     def test_top_level_reexports_chunking(self) -> None:
         assert BaseChunker is DirectBaseChunker
         assert get_chunker is direct_get_chunker
@@ -132,7 +138,7 @@ class TestPublicAPI:
 
     def test_version_attribute_is_defined(self) -> None:
         assert isinstance(__version__, str)
-        assert __version__ == "0.3.7"
+        assert __version__ == "0.3.8"
 
     def test_all_contains_expected_names(self) -> None:
         public_names = set(getattr(embeddy, "__all__", []))
@@ -172,6 +178,8 @@ class TestPublicAPI:
             "SearchService",
             # Server layer
             "create_app",
+            # Client layer
+            "EmbeddyClient",
             # Models - enums
             "ContentType",
             "SearchMode",
@@ -240,6 +248,7 @@ class TestPublicAPI:
             "Pipeline",
             "SearchService",
             "create_app",
+            "EmbeddyClient",
             "ContentType",
             "SearchMode",
             "FusionStrategy",

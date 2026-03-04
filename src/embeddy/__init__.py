@@ -34,6 +34,7 @@ from embeddy.ingest import (
 )
 from embeddy.pipeline import Pipeline
 from embeddy.search import SearchService
+from embeddy.client import EmbeddyClient
 from embeddy.server import create_app
 from embeddy.store import VectorStore
 from embeddy.exceptions import (
@@ -66,7 +67,7 @@ from embeddy.models import (
     SourceMetadata,
 )
 
-__version__ = "0.3.7"
+__version__ = "0.3.8"
 
 __all__ = [
     # Version
@@ -105,6 +106,8 @@ __all__ = [
     "SearchService",
     # Server layer
     "create_app",
+    # Client layer
+    "EmbeddyClient",
     # Ingest layer
     "Ingestor",
     "compute_content_hash",
