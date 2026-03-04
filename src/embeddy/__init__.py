@@ -32,6 +32,7 @@ from embeddy.ingest import (
     detect_content_type,
     is_docling_path,
 )
+from embeddy.pipeline import Pipeline
 from embeddy.store import VectorStore
 from embeddy.exceptions import (
     ChunkingError,
@@ -63,7 +64,7 @@ from embeddy.models import (
     SourceMetadata,
 )
 
-__version__ = "0.3.4"
+__version__ = "0.3.5"
 
 __all__ = [
     # Version
@@ -96,6 +97,8 @@ __all__ = [
     "get_chunker",
     # Store layer
     "VectorStore",
+    # Pipeline layer
+    "Pipeline",
     # Ingest layer
     "Ingestor",
     "compute_content_hash",

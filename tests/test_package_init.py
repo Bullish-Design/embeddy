@@ -1,5 +1,5 @@
 # tests/test_package_init.py
-"""Tests for the embeddy package's public import surface (v0.3.4)."""
+"""Tests for the embeddy package's public import surface (v0.3.5)."""
 
 from __future__ import annotations
 
@@ -33,6 +33,8 @@ from embeddy import (
     compute_content_hash,
     detect_content_type,
     is_docling_path,
+    # Pipeline layer
+    Pipeline,
     # Models - enums
     ContentType,
     DistanceMetric,
@@ -82,6 +84,7 @@ from embeddy.ingest import Ingestor as DirectIngestor
 from embeddy.ingest import compute_content_hash as direct_compute_content_hash
 from embeddy.ingest import detect_content_type as direct_detect_content_type
 from embeddy.ingest import is_docling_path as direct_is_docling_path
+from embeddy.pipeline import Pipeline as DirectPipeline
 
 
 class TestPublicAPI:
@@ -105,6 +108,9 @@ class TestPublicAPI:
         assert detect_content_type is direct_detect_content_type
         assert is_docling_path is direct_is_docling_path
 
+    def test_top_level_reexports_pipeline(self) -> None:
+        assert Pipeline is DirectPipeline
+
     def test_top_level_reexports_chunking(self) -> None:
         assert BaseChunker is DirectBaseChunker
         assert get_chunker is direct_get_chunker
@@ -114,7 +120,7 @@ class TestPublicAPI:
 
     def test_version_attribute_is_defined(self) -> None:
         assert isinstance(__version__, str)
-        assert __version__ == "0.3.4"
+        assert __version__ == "0.3.5"
 
     def test_all_contains_expected_names(self) -> None:
         public_names = set(getattr(embeddy, "__all__", []))
@@ -148,6 +154,8 @@ class TestPublicAPI:
             "compute_content_hash",
             "detect_content_type",
             "is_docling_path",
+            # Pipeline layer
+            "Pipeline",
             # Models - enums
             "ContentType",
             "SearchMode",
@@ -213,6 +221,7 @@ class TestPublicAPI:
             "compute_content_hash",
             "detect_content_type",
             "is_docling_path",
+            "Pipeline",
             "ContentType",
             "SearchMode",
             "FusionStrategy",
