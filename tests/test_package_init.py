@@ -1,5 +1,5 @@
 # tests/test_package_init.py
-"""Tests for the embeddy package's public import surface (v0.3.0)."""
+"""Tests for the embeddy package's public import surface (v0.3.3)."""
 
 from __future__ import annotations
 
@@ -18,6 +18,14 @@ from embeddy import (
     EmbedderBackend,
     LocalBackend,
     RemoteBackend,
+    # Chunking layer
+    BaseChunker,
+    PythonChunker,
+    MarkdownChunker,
+    ParagraphChunker,
+    TokenWindowChunker,
+    DoclingChunker,
+    get_chunker,
     # Store layer
     VectorStore,
     # Models - enums
@@ -62,6 +70,8 @@ from embeddy.config import load_config_file as direct_load_config_file
 from embeddy.exceptions import EmbeddyError as DirectEmbeddyError
 from embeddy.models import Embedding as DirectEmbedding
 from embeddy.models import SearchResult as DirectSearchResult
+from embeddy.chunking import BaseChunker as DirectBaseChunker
+from embeddy.chunking import get_chunker as direct_get_chunker
 from embeddy.store import VectorStore as DirectVectorStore
 
 
@@ -80,12 +90,16 @@ class TestPublicAPI:
     def test_top_level_reexports_store(self) -> None:
         assert VectorStore is DirectVectorStore
 
+    def test_top_level_reexports_chunking(self) -> None:
+        assert BaseChunker is DirectBaseChunker
+        assert get_chunker is direct_get_chunker
+
     def test_top_level_reexports_exceptions(self) -> None:
         assert EmbeddyError is DirectEmbeddyError
 
     def test_version_attribute_is_defined(self) -> None:
         assert isinstance(__version__, str)
-        assert __version__ == "0.3.2"
+        assert __version__ == "0.3.3"
 
     def test_all_contains_expected_names(self) -> None:
         public_names = set(getattr(embeddy, "__all__", []))
@@ -104,6 +118,14 @@ class TestPublicAPI:
             "EmbedderBackend",
             "LocalBackend",
             "RemoteBackend",
+            # Chunking layer
+            "BaseChunker",
+            "PythonChunker",
+            "MarkdownChunker",
+            "ParagraphChunker",
+            "TokenWindowChunker",
+            "DoclingChunker",
+            "get_chunker",
             # Store layer
             "VectorStore",
             # Models - enums
@@ -159,6 +181,13 @@ class TestPublicAPI:
             "EmbedderBackend",
             "LocalBackend",
             "RemoteBackend",
+            "BaseChunker",
+            "PythonChunker",
+            "MarkdownChunker",
+            "ParagraphChunker",
+            "TokenWindowChunker",
+            "DoclingChunker",
+            "get_chunker",
             "VectorStore",
             "ContentType",
             "SearchMode",

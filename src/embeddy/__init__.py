@@ -16,6 +16,15 @@ from embeddy.config import (
     StoreConfig,
     load_config_file,
 )
+from embeddy.chunking import (
+    BaseChunker,
+    DoclingChunker,
+    MarkdownChunker,
+    ParagraphChunker,
+    PythonChunker,
+    TokenWindowChunker,
+    get_chunker,
+)
 from embeddy.embedding import Embedder, EmbedderBackend, LocalBackend, RemoteBackend
 from embeddy.store import VectorStore
 from embeddy.exceptions import (
@@ -48,7 +57,7 @@ from embeddy.models import (
     SourceMetadata,
 )
 
-__version__ = "0.3.2"
+__version__ = "0.3.3"
 
 __all__ = [
     # Version
@@ -71,6 +80,14 @@ __all__ = [
     "EmbedderBackend",
     "LocalBackend",
     "RemoteBackend",
+    # Chunking layer
+    "BaseChunker",
+    "PythonChunker",
+    "MarkdownChunker",
+    "ParagraphChunker",
+    "TokenWindowChunker",
+    "DoclingChunker",
+    "get_chunker",
     # Store layer
     "VectorStore",
     # Models - embedding
