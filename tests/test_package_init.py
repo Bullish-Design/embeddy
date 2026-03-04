@@ -1,5 +1,5 @@
 # tests/test_package_init.py
-"""Tests for the embeddy package's public import surface (v0.3.6)."""
+"""Tests for the embeddy package's public import surface (v0.3.7)."""
 
 from __future__ import annotations
 
@@ -37,6 +37,8 @@ from embeddy import (
     Pipeline,
     # Search layer
     SearchService,
+    # Server layer
+    create_app,
     # Models - enums
     ContentType,
     DistanceMetric,
@@ -88,6 +90,7 @@ from embeddy.ingest import detect_content_type as direct_detect_content_type
 from embeddy.ingest import is_docling_path as direct_is_docling_path
 from embeddy.pipeline import Pipeline as DirectPipeline
 from embeddy.search import SearchService as DirectSearchService
+from embeddy.server import create_app as direct_create_app
 
 
 class TestPublicAPI:
@@ -117,6 +120,9 @@ class TestPublicAPI:
     def test_top_level_reexports_search_service(self) -> None:
         assert SearchService is DirectSearchService
 
+    def test_top_level_reexports_server(self) -> None:
+        assert create_app is direct_create_app
+
     def test_top_level_reexports_chunking(self) -> None:
         assert BaseChunker is DirectBaseChunker
         assert get_chunker is direct_get_chunker
@@ -126,7 +132,7 @@ class TestPublicAPI:
 
     def test_version_attribute_is_defined(self) -> None:
         assert isinstance(__version__, str)
-        assert __version__ == "0.3.6"
+        assert __version__ == "0.3.7"
 
     def test_all_contains_expected_names(self) -> None:
         public_names = set(getattr(embeddy, "__all__", []))
@@ -164,6 +170,8 @@ class TestPublicAPI:
             "Pipeline",
             # Search layer
             "SearchService",
+            # Server layer
+            "create_app",
             # Models - enums
             "ContentType",
             "SearchMode",
@@ -231,6 +239,7 @@ class TestPublicAPI:
             "is_docling_path",
             "Pipeline",
             "SearchService",
+            "create_app",
             "ContentType",
             "SearchMode",
             "FusionStrategy",

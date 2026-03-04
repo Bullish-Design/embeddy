@@ -34,6 +34,7 @@ from embeddy.ingest import (
 )
 from embeddy.pipeline import Pipeline
 from embeddy.search import SearchService
+from embeddy.server import create_app
 from embeddy.store import VectorStore
 from embeddy.exceptions import (
     ChunkingError,
@@ -65,7 +66,7 @@ from embeddy.models import (
     SourceMetadata,
 )
 
-__version__ = "0.3.6"
+__version__ = "0.3.7"
 
 __all__ = [
     # Version
@@ -102,6 +103,8 @@ __all__ = [
     "Pipeline",
     # Search layer
     "SearchService",
+    # Server layer
+    "create_app",
     # Ingest layer
     "Ingestor",
     "compute_content_hash",
