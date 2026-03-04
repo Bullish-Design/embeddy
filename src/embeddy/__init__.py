@@ -26,6 +26,12 @@ from embeddy.chunking import (
     get_chunker,
 )
 from embeddy.embedding import Embedder, EmbedderBackend, LocalBackend, RemoteBackend
+from embeddy.ingest import (
+    Ingestor,
+    compute_content_hash,
+    detect_content_type,
+    is_docling_path,
+)
 from embeddy.store import VectorStore
 from embeddy.exceptions import (
     ChunkingError,
@@ -57,7 +63,7 @@ from embeddy.models import (
     SourceMetadata,
 )
 
-__version__ = "0.3.3"
+__version__ = "0.3.4"
 
 __all__ = [
     # Version
@@ -90,6 +96,11 @@ __all__ = [
     "get_chunker",
     # Store layer
     "VectorStore",
+    # Ingest layer
+    "Ingestor",
+    "compute_content_hash",
+    "detect_content_type",
+    "is_docling_path",
     # Models - embedding
     "EmbedInput",
     "Embedding",
