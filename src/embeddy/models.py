@@ -364,5 +364,8 @@ class IngestStats(BaseModel):
     chunks_embedded: int = 0
     chunks_stored: int = 0
     chunks_skipped: int = 0  # Skipped due to content-hash dedup
+    chunks_removed: int = 0  # Chunks deleted during reindex
+    content_hash: str | None = None  # Content hash of the ingested source
+    collection: str | None = None  # Target collection name
     errors: list[IngestError] = Field(default_factory=list)
     elapsed_seconds: float = 0.0

@@ -11,9 +11,11 @@ All tests mock the Embedder and VectorStore to avoid heavy dependencies.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import textwrap
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -582,3 +584,350 @@ class TestPipelineErrorHandling:
         stats = await pipeline.ingest_directory(tmp_path)
         # At least the good file should succeed
         assert stats.files_processed >= 1 or len(stats.errors) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Pipeline — on_file_indexed callback hook
+# ---------------------------------------------------------------------------
+
+
+class TestPipelineOnFileIndexedHook:
+    """Tests for the on_file_indexed callback hook."""
+
+    def test_hook_defaults_to_none(self):
+        """Pipeline defaults on_file_indexed to None (backward compat)."""
+        from embeddy.pipeline.pipeline import Pipeline
+
+        embedder = _make_mock_embedder()
+        store = _make_mock_store()
+        pipeline = Pipeline(embedder=embedder, store=store)
+        assert pipeline._on_file_indexed is None
+
+    async def test_hook_called_after_ingest_file(self, tmp_path: Path):
+        """on_file_indexed is called after successful ingest_file."""
+        from embeddy.pipeline.pipeline import Pipeline
+
+        py_file = tmp_path / "example.py"
+        py_file.write_text("def hello():\n    pass\n")
+
+        embedder = _make_mock_embedder()
+        store = _make_mock_store()
+        hook = MagicMock()
+
+        pipeline = Pipeline(
+            embedder=embedder,
+            store=store,
+            collection="test",
+            on_file_indexed=hook,
+        )
+
+        stats = await pipeline.ingest_file(py_file)
+        hook.assert_called_once()
+        call_args = hook.call_args
+        assert call_args[0][0] == str(py_file)  # source path
+        assert isinstance(call_args[0][1], IngestStats)  # stats
+
+    async def test_hook_called_after_ingest_text(self):
+        """on_file_indexed is called after successful ingest_text."""
+        from embeddy.pipeline.pipeline import Pipeline
+
+        embedder = _make_mock_embedder()
+        store = _make_mock_store()
+        hook = MagicMock()
+
+        pipeline = Pipeline(
+            embedder=embedder,
+            store=store,
+            collection="test",
+            on_file_indexed=hook,
+        )
+
+        stats = await pipeline.ingest_text("Hello, world! Test content.", source="clipboard")
+        hook.assert_called_once()
+        call_args = hook.call_args
+        assert call_args[0][0] == "clipboard"  # source
+        assert isinstance(call_args[0][1], IngestStats)
+
+    async def test_hook_called_after_reindex_file(self, tmp_path: Path):
+        """on_file_indexed is called after successful reindex_file."""
+        from embeddy.pipeline.pipeline import Pipeline
+
+        py_file = tmp_path / "example.py"
+        py_file.write_text("def hello():\n    pass\n")
+
+        embedder = _make_mock_embedder()
+        store = _make_mock_store()
+        store.delete_by_source = AsyncMock(return_value=3)
+        hook = MagicMock()
+
+        pipeline = Pipeline(
+            embedder=embedder,
+            store=store,
+            collection="test",
+            on_file_indexed=hook,
+        )
+
+        stats = await pipeline.reindex_file(py_file)
+        hook.assert_called_once()
+        call_args = hook.call_args
+        assert call_args[0][0] == str(py_file)
+        assert isinstance(call_args[0][1], IngestStats)
+
+    async def test_hook_not_called_on_error(self):
+        """on_file_indexed is NOT called when ingestion has errors."""
+        from embeddy.pipeline.pipeline import Pipeline
+
+        embedder = _make_mock_embedder()
+        store = _make_mock_store()
+        hook = MagicMock()
+
+        pipeline = Pipeline(
+            embedder=embedder,
+            store=store,
+            collection="test",
+            on_file_indexed=hook,
+        )
+
+        # Ingest empty text -> will error
+        stats = await pipeline.ingest_text("")
+        assert len(stats.errors) > 0
+        hook.assert_not_called()
+
+    async def test_hook_not_called_on_file_not_found(self):
+        """on_file_indexed is NOT called when file doesn't exist."""
+        from embeddy.pipeline.pipeline import Pipeline
+
+        embedder = _make_mock_embedder()
+        store = _make_mock_store()
+        hook = MagicMock()
+
+        pipeline = Pipeline(
+            embedder=embedder,
+            store=store,
+            collection="test",
+            on_file_indexed=hook,
+        )
+
+        stats = await pipeline.ingest_file(Path("/nonexistent/file.py"))
+        hook.assert_not_called()
+
+    async def test_async_hook_is_awaited(self, tmp_path: Path):
+        """An async on_file_indexed callback is properly awaited."""
+        from embeddy.pipeline.pipeline import Pipeline
+
+        py_file = tmp_path / "example.py"
+        py_file.write_text("x = 1\n")
+
+        embedder = _make_mock_embedder()
+        store = _make_mock_store()
+
+        captured: list[tuple[str, IngestStats]] = []
+
+        async def async_hook(source: str, stats: IngestStats) -> None:
+            captured.append((source, stats))
+
+        pipeline = Pipeline(
+            embedder=embedder,
+            store=store,
+            collection="test",
+            on_file_indexed=async_hook,
+        )
+
+        await pipeline.ingest_file(py_file)
+        assert len(captured) == 1
+        assert captured[0][0] == str(py_file)
+        assert isinstance(captured[0][1], IngestStats)
+
+    async def test_sync_hook_works(self, tmp_path: Path):
+        """A plain sync on_file_indexed callback works."""
+        from embeddy.pipeline.pipeline import Pipeline
+
+        py_file = tmp_path / "example.py"
+        py_file.write_text("x = 1\n")
+
+        embedder = _make_mock_embedder()
+        store = _make_mock_store()
+
+        captured: list[tuple[str, IngestStats]] = []
+
+        def sync_hook(source: str, stats: IngestStats) -> None:
+            captured.append((source, stats))
+
+        pipeline = Pipeline(
+            embedder=embedder,
+            store=store,
+            collection="test",
+            on_file_indexed=sync_hook,
+        )
+
+        await pipeline.ingest_file(py_file)
+        assert len(captured) == 1
+        assert captured[0][0] == str(py_file)
+
+    async def test_hook_not_called_for_skipped_dedup(self, tmp_path: Path):
+        """on_file_indexed is NOT called when file is skipped due to dedup."""
+        from embeddy.pipeline.pipeline import Pipeline
+
+        txt_file = tmp_path / "notes.txt"
+        txt_file.write_text("Same content as before.")
+
+        embedder = _make_mock_embedder()
+        store = _make_mock_store()
+        store.has_content_hash = AsyncMock(return_value=True)
+        hook = MagicMock()
+
+        pipeline = Pipeline(
+            embedder=embedder,
+            store=store,
+            collection="test",
+            on_file_indexed=hook,
+        )
+
+        stats = await pipeline.ingest_file(txt_file)
+        hook.assert_not_called()
+
+    async def test_hook_receives_source_none_for_text_without_source(self):
+        """When ingest_text has no source, hook receives None as source."""
+        from embeddy.pipeline.pipeline import Pipeline
+
+        embedder = _make_mock_embedder()
+        store = _make_mock_store()
+        hook = MagicMock()
+
+        pipeline = Pipeline(
+            embedder=embedder,
+            store=store,
+            collection="test",
+            on_file_indexed=hook,
+        )
+
+        stats = await pipeline.ingest_text("Hello, world! Test content.")
+        hook.assert_called_once()
+        call_args = hook.call_args
+        assert call_args[0][0] is None  # no source
+
+
+# ---------------------------------------------------------------------------
+# Pipeline — stats enrichment (collection, content_hash, chunks_removed)
+# ---------------------------------------------------------------------------
+
+
+class TestPipelineStatsEnrichment:
+    """Tests for populating new IngestStats fields."""
+
+    async def test_ingest_file_sets_collection(self, tmp_path: Path):
+        """ingest_file populates stats.collection from pipeline's collection."""
+        from embeddy.pipeline.pipeline import Pipeline
+
+        py_file = tmp_path / "example.py"
+        py_file.write_text("x = 1\n")
+
+        embedder = _make_mock_embedder()
+        store = _make_mock_store()
+        pipeline = Pipeline(embedder=embedder, store=store, collection="emb_code")
+
+        stats = await pipeline.ingest_file(py_file)
+        assert stats.collection == "emb_code"
+
+    async def test_ingest_text_sets_collection(self):
+        """ingest_text populates stats.collection from pipeline's collection."""
+        from embeddy.pipeline.pipeline import Pipeline
+
+        embedder = _make_mock_embedder()
+        store = _make_mock_store()
+        pipeline = Pipeline(embedder=embedder, store=store, collection="my_col")
+
+        stats = await pipeline.ingest_text("Hello, world!")
+        assert stats.collection == "my_col"
+
+    async def test_reindex_sets_collection(self, tmp_path: Path):
+        """reindex_file populates stats.collection."""
+        from embeddy.pipeline.pipeline import Pipeline
+
+        py_file = tmp_path / "example.py"
+        py_file.write_text("x = 1\n")
+
+        embedder = _make_mock_embedder()
+        store = _make_mock_store()
+        store.delete_by_source = AsyncMock(return_value=2)
+        pipeline = Pipeline(embedder=embedder, store=store, collection="reindex_col")
+
+        stats = await pipeline.reindex_file(py_file)
+        assert stats.collection == "reindex_col"
+
+    async def test_ingest_file_sets_content_hash(self, tmp_path: Path):
+        """ingest_file populates stats.content_hash from IngestResult."""
+        from embeddy.pipeline.pipeline import Pipeline
+
+        py_file = tmp_path / "example.py"
+        py_file.write_text("x = 1\n")
+
+        embedder = _make_mock_embedder()
+        store = _make_mock_store()
+        pipeline = Pipeline(embedder=embedder, store=store, collection="test")
+
+        stats = await pipeline.ingest_file(py_file)
+        # The Ingestor computes a content_hash from file content
+        assert stats.content_hash is not None
+        assert len(stats.content_hash) > 0
+
+    async def test_reindex_sets_content_hash(self, tmp_path: Path):
+        """reindex_file populates stats.content_hash."""
+        from embeddy.pipeline.pipeline import Pipeline
+
+        py_file = tmp_path / "example.py"
+        py_file.write_text("x = 1\n")
+
+        embedder = _make_mock_embedder()
+        store = _make_mock_store()
+        store.delete_by_source = AsyncMock(return_value=2)
+        pipeline = Pipeline(embedder=embedder, store=store, collection="test")
+
+        stats = await pipeline.reindex_file(py_file)
+        assert stats.content_hash is not None
+
+    async def test_reindex_captures_chunks_removed(self, tmp_path: Path):
+        """reindex_file captures chunks_removed from delete_by_source return."""
+        from embeddy.pipeline.pipeline import Pipeline
+
+        py_file = tmp_path / "example.py"
+        py_file.write_text("def hello():\n    pass\n")
+
+        embedder = _make_mock_embedder()
+        store = _make_mock_store()
+        store.delete_by_source = AsyncMock(return_value=7)
+
+        pipeline = Pipeline(embedder=embedder, store=store, collection="test")
+
+        stats = await pipeline.reindex_file(py_file)
+        assert stats.chunks_removed == 7
+
+    async def test_reindex_chunks_removed_zero_when_nothing_deleted(self, tmp_path: Path):
+        """chunks_removed is 0 when delete_by_source returns 0."""
+        from embeddy.pipeline.pipeline import Pipeline
+
+        py_file = tmp_path / "example.py"
+        py_file.write_text("x = 1\n")
+
+        embedder = _make_mock_embedder()
+        store = _make_mock_store()
+        store.delete_by_source = AsyncMock(return_value=0)
+
+        pipeline = Pipeline(embedder=embedder, store=store, collection="test")
+
+        stats = await pipeline.reindex_file(py_file)
+        assert stats.chunks_removed == 0
+
+    async def test_ingest_file_chunks_removed_stays_zero(self, tmp_path: Path):
+        """ingest_file (not reindex) has chunks_removed == 0."""
+        from embeddy.pipeline.pipeline import Pipeline
+
+        py_file = tmp_path / "example.py"
+        py_file.write_text("x = 1\n")
+
+        embedder = _make_mock_embedder()
+        store = _make_mock_store()
+        pipeline = Pipeline(embedder=embedder, store=store, collection="test")
+
+        stats = await pipeline.ingest_file(py_file)
+        assert stats.chunks_removed == 0

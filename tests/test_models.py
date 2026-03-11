@@ -438,6 +438,9 @@ class TestIngestStats:
         assert stats.chunks_embedded == 0
         assert stats.chunks_stored == 0
         assert stats.chunks_skipped == 0
+        assert stats.chunks_removed == 0
+        assert stats.content_hash is None
+        assert stats.collection is None
         assert stats.errors == []
         assert stats.elapsed_seconds == 0.0
 
@@ -446,3 +449,31 @@ class TestIngestStats:
         stats = IngestStats(files_processed=5, chunks_created=10, errors=errs)
         assert stats.files_processed == 5
         assert len(stats.errors) == 2
+
+    def test_chunks_removed_field(self) -> None:
+        stats = IngestStats(chunks_removed=7)
+        assert stats.chunks_removed == 7
+
+    def test_content_hash_field(self) -> None:
+        stats = IngestStats(content_hash="abc123")
+        assert stats.content_hash == "abc123"
+
+    def test_collection_field(self) -> None:
+        stats = IngestStats(collection="emb_code")
+        assert stats.collection == "emb_code"
+
+    def test_full_stats_for_reindex(self) -> None:
+        """IngestStats can carry all data needed for IndexUpdatedEvent."""
+        stats = IngestStats(
+            files_processed=1,
+            chunks_created=5,
+            chunks_embedded=5,
+            chunks_stored=5,
+            chunks_removed=3,
+            content_hash="sha256:deadbeef",
+            collection="emb_code",
+            elapsed_seconds=0.42,
+        )
+        assert stats.chunks_removed == 3
+        assert stats.content_hash == "sha256:deadbeef"
+        assert stats.collection == "emb_code"

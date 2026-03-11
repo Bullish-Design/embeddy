@@ -14,6 +14,7 @@ import fnmatch
 import logging
 import time
 from pathlib import Path
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from embeddy.chunking import get_chunker
@@ -41,6 +42,8 @@ class Pipeline:
         store: The vector store.
         collection: Target collection name (created if missing).
         chunk_config: Optional chunking configuration override.
+        on_file_indexed: Optional callback invoked after each successful
+            ingest/reindex with ``(source_path, stats)``.  May be sync or async.
     """
 
     def __init__(
@@ -49,12 +52,14 @@ class Pipeline:
         store: VectorStore,
         collection: str = "default",
         chunk_config: ChunkConfig | None = None,
+        on_file_indexed: Callable[[str | None, IngestStats], Any] | None = None,
     ) -> None:
         self._embedder = embedder
         self._store = store
         self._collection = collection
         self._chunk_config = chunk_config or ChunkConfig()
         self._ingestor = Ingestor()
+        self._on_file_indexed = on_file_indexed
 
     # ------------------------------------------------------------------
     # Ensure collection exists
@@ -69,6 +74,14 @@ class Pipeline:
                 dimension=self._embedder.dimension,
                 model_name=self._embedder.model_name,
             )
+
+    async def _fire_hook(self, source: str | None, stats: IngestStats) -> None:
+        """Invoke *on_file_indexed* if set, handling sync and async callables."""
+        if self._on_file_indexed is None:
+            return
+        result = self._on_file_indexed(source, stats)
+        if asyncio.iscoroutine(result) or asyncio.isfuture(result):
+            await result
 
     # ------------------------------------------------------------------
     # ingest_text
@@ -113,7 +126,10 @@ class Pipeline:
 
         stats = await self._process_ingest_result(ingest_result, stats)
         stats.files_processed = 1
+        stats.collection = self._collection
         stats.elapsed_seconds = time.monotonic() - start
+        if not stats.errors:
+            await self._fire_hook(source, stats)
         return stats
 
     # ------------------------------------------------------------------
@@ -173,7 +189,11 @@ class Pipeline:
 
         stats = await self._process_ingest_result(ingest_result, stats)
         stats.files_processed = 1
+        stats.collection = self._collection
+        stats.content_hash = ingest_result.source.content_hash
         stats.elapsed_seconds = time.monotonic() - start
+        if not stats.errors:
+            await self._fire_hook(str(path), stats)
         return stats
 
     # ------------------------------------------------------------------
@@ -260,7 +280,7 @@ class Pipeline:
 
         try:
             await self._ensure_collection()
-            await self._store.delete_by_source(self._collection, str(path))
+            chunks_removed = await self._store.delete_by_source(self._collection, str(path))
         except Exception as exc:
             stats.errors.append(
                 IngestErrorModel(
@@ -288,7 +308,12 @@ class Pipeline:
 
         stats = await self._process_ingest_result(ingest_result, stats)
         stats.files_processed = 1
+        stats.chunks_removed = chunks_removed
+        stats.collection = self._collection
+        stats.content_hash = ingest_result.source.content_hash
         stats.elapsed_seconds = time.monotonic() - start
+        if not stats.errors:
+            await self._fire_hook(str(path), stats)
         return stats
 
     # ------------------------------------------------------------------
