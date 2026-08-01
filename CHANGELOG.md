@@ -8,9 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and
 this project adheres to [Semantic Versioning](https://semver.org/) with
 0.x semantics (see the policy doc).
 
-## [Unreleased]
-
-### Added — Phase 8 / M7 (the scale path, post-v1 gates)
+## [0.1.1] — 2026-08-01 (M7 — the scale path, post-v1 gates)
 
 - **QdrantStore** (`embeddy/index/qdrant.py`) — a second `Searchable`
   backend behind the FROZEN M4 protocol (no protocol or wire-shape change):

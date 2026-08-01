@@ -32,7 +32,7 @@ from chonkai.models import (
 from chonkai.tokens import default_token_counter, tokenizers_token_counter
 from chonkai.validated import ChunkValidationError, ValidatedChunker, split_by_tokens
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "CHUNK_TYPES",

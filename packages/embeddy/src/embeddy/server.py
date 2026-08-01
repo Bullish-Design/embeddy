@@ -372,7 +372,7 @@ def create_app(
     app = FastAPI(
         title="embeddy",
         description="Typed, metric-honest embedding, storage, search, and serving (plan §8).",
-        version="0.1.0",
+        version="0.1.1",
         lifespan=lifespan,
     )
     app.state.server = _ServerState(

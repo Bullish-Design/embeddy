@@ -74,7 +74,7 @@ from embeddy.registry import (
 )
 from embeddy.search import RRF_DEFAULT_K, fuse_rrf, fuse_weighted, search_hybrid
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "CollectionStats",

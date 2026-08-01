@@ -213,7 +213,7 @@ wheels = [
 
 [[package]]
 name = "chonkai"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/chonkai" }
 dependencies = [
     { name = "numpy" },
@@ -635,7 +635,7 @@ standard = [
 
 [[package]]
 name = "embeddy"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/embeddy" }
 dependencies = [
     { name = "aiosqlite" },

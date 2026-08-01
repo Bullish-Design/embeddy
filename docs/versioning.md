@@ -21,8 +21,8 @@ one CHANGELOG entry. They may decouple once the split proves itself (plan
 ## What triggers a release
 
 A release happens when the **M6-style release gate** is green on `main`
-(the M7 scale-path gate is a review gate, not itself a release trigger —
-its entry is held under `[Unreleased]` until a release is cut):
+(the M7 scale-path gate is a review gate — its work ships in the next
+release entry, e.g. 0.1.1):
 
 1. **Install matrix green** — `scripts/check_install_matrix.py` passes every
    row (zero extras + all extras) in fresh venvs.
