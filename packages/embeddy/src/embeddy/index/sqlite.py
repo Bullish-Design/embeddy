@@ -39,6 +39,7 @@ import math
 import re
 import sqlite3
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -141,6 +142,19 @@ class StoreError(RuntimeError):
 class SchemaError(RuntimeError):
     """The on-disk schema is newer/older than this code; re-ingest from
     source (there is no in-place migration)."""
+
+
+@dataclass(frozen=True, slots=True)
+class CollectionInfo:
+    """One collection row's metadata (the server's GET /api/v1/collections).
+
+    A store EXTRA record (like the create_collection/count_fts methods) —
+    NOT part of the frozen `Searchable` protocol; the server owns collection
+    lifecycle and reads this through `SqliteStore.list_collections`.
+    """
+
+    collection_id: str
+    vector_dimension: int  # the RESOLVED dimension the collection stores
 
 
 async def _fetchall(
@@ -400,6 +414,99 @@ class SqliteStore:
         except BaseException:
             await db.rollback()
             raise
+
+    # ------------------------------------------------------------------ #
+    # chunk listing (server /api/v1/chunks + /api/v1/similar support) ---- #
+    # ------------------------------------------------------------------ #
+
+    async def get_chunk(self, collection: str, chunk_id: str) -> StoredChunk | None:
+        """Fetch ONE stored chunk by id (the server's /api/v1/similar).
+
+        Store EXTRA beyond the Searchable protocol (like create_collection /
+        count_fts) — the protocol has no get-by-id, and the Phase-6 server
+        needs it to re-embed an existing chunk. Returns None when the chunk
+        does not exist in `collection`.
+        """
+        self._validate_collection_id(collection)
+        db = self._require_db()
+        rows = await _fetchall(
+            db,
+            "SELECT id, collection_id, source_id, content, chunk_type, "
+            "start_line, end_line, parent, granularity, token_count "
+            "FROM chunks WHERE collection_id = ? AND id = ?",
+            (collection, chunk_id),
+        )
+        if not rows:
+            return None
+        row = rows[0]
+        return StoredChunk(
+            id=row["id"],
+            collection_id=row["collection_id"],
+            source_id=row["source_id"],
+            content=row["content"],
+            chunk_type=row["chunk_type"],
+            start_line=int(row["start_line"]),
+            end_line=int(row["end_line"]),
+            parent=row["parent"],
+            granularity=row["granularity"],
+            token_count=int(row["token_count"]),
+        )
+
+    async def list_chunks(
+        self,
+        collection: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[StoredChunk]:
+        """List stored chunks in id order (the server's GET /api/v1/chunks).
+
+        Store EXTRA beyond the Searchable protocol (the server's chunks
+        listing surface). `limit`/`offset` are page bounds (both validated
+        >= the documented minimums); the server additionally enforces its
+        own limit cap (max_top_k, OOM prevention).
+        """
+        self._validate_collection_id(collection)
+        if limit < 1:
+            raise StoreError(f"limit must be >= 1, got {limit}")
+        if offset < 0:
+            raise StoreError(f"offset must be >= 0, got {offset}")
+        await self._collection_dimension(collection)  # must exist
+        db = self._require_db()
+        rows = await _fetchall(
+            db,
+            "SELECT id, collection_id, source_id, content, chunk_type, "
+            "start_line, end_line, parent, granularity, token_count "
+            "FROM chunks WHERE collection_id = ? ORDER BY id LIMIT ? OFFSET ?",
+            (collection, limit, offset),
+        )
+        return [
+            StoredChunk(
+                id=row["id"],
+                collection_id=row["collection_id"],
+                source_id=row["source_id"],
+                content=row["content"],
+                chunk_type=row["chunk_type"],
+                start_line=int(row["start_line"]),
+                end_line=int(row["end_line"]),
+                parent=row["parent"],
+                granularity=row["granularity"],
+                token_count=int(row["token_count"]),
+            )
+            for row in rows
+        ]
+
+    async def list_collections(self) -> list[CollectionInfo]:
+        """List all collections in id order (the server's GET
+        /api/v1/collections). Store EXTRA beyond the Searchable protocol —
+        the server owns collection lifecycle.
+        """
+        db = self._require_db()
+        rows = await _fetchall(db, "SELECT id, vector_dimension FROM collections ORDER BY id")
+        return [
+            CollectionInfo(collection_id=row["id"], vector_dimension=int(row["vector_dimension"]))
+            for row in rows
+        ]
 
     # ------------------------------------------------------------------ #
     # add / delete / reindex

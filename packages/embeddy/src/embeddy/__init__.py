@@ -6,13 +6,21 @@ Consumes chonkai (one-way dependency). Importable with zero extras
 
 from embeddy.budget import DEFAULT_HEADROOM_TOKENS, chunk_budget
 from embeddy.config import (
+    DEFAULT_MAX_BODY_BYTES,
+    DEFAULT_MAX_EMBED_INPUTS,
+    DEFAULT_MAX_TOP_K,
     DEFAULT_PIPELINE_CONCURRENCY,
+    DEFAULT_SERVER_BASE_URL,
+    DEFAULT_SERVER_STORE_PATH,
     EmbedderSettings,
     PipelineSettings,
+    ServerSettings,
     load_pipeline_settings,
+    load_server_settings,
     load_settings,
 )
 from embeddy.errors import (
+    ClientError,
     EmbeddyError,
     HTTPProviderError,
     ModelNotLoadedError,
@@ -70,10 +78,16 @@ __version__ = "0.1.0"
 
 __all__ = [
     "CollectionStats",
+    "ClientError",
     "CrossEncoderReranker",
+    "DEFAULT_MAX_BODY_BYTES",
+    "DEFAULT_MAX_EMBED_INPUTS",
+    "DEFAULT_MAX_TOP_K",
     "DEFAULT_HEADROOM_TOKENS",
     "DEFAULT_MODELS",
     "DEFAULT_PIPELINE_CONCURRENCY",
+    "DEFAULT_SERVER_BASE_URL",
+    "DEFAULT_SERVER_STORE_PATH",
     "EmbedInput",
     "EmbedderSettings",
     "FileEvent",
@@ -105,6 +119,7 @@ __all__ = [
     "RerankerProvider",
     "ScoredDocument",
     "SearchResult",
+    "ServerSettings",
     "SourceId",
     "SourceMetadata",
     "StoredChunk",
@@ -118,6 +133,7 @@ __all__ = [
     "fuse_rrf",
     "fuse_weighted",
     "get_model",
+    "load_server_settings",
     "load_settings",
     "normalize_l2",
     "resolve_dimension",

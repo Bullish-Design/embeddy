@@ -28,7 +28,30 @@ uv run ty check       # strict type check
 uv run ruff check .   # lint
 ```
 
-## Status — M2 (Phase 1 keystone + Phase 2 chonkai v1)
+## Status — M5 (Phase 6: server, client, CLI)
+
+- `embeddy.server` — FastAPI factory (`create_app` with a DI seam) + a bare
+  module-level `app` (`uvicorn embeddy.server:app`); lifespan opens the store,
+  builds+loads the provider, closes on shutdown; honest health (`/health/live`,
+  `/health/ready`); OpenAI-compatible `/v1/embeddings`, TEI/Jina `/v1/rerank`,
+  and `/api/v1/{search,similar,rerank,ingest,collections,chunks}`; CORS from
+  config; request/batch size limits (OOM prevention only, CONCEPT §9.7);
+  query-role resolution on embed/search routes, document role in the pipeline
+  (H2). See `docs/config.md` for the error map.
+- `embeddy.client` — `EmbeddyClient`, mirrors every server route, shares
+  `build_embeddings_request` with `HTTPProvider` (one wire protocol).
+- `embeddy.cli` — `serve` / `ingest text|file|dir` / `search` / `info` (Typer;
+  config precedence CLI > file > env > defaults). See `docs/cli.md`.
+- `embeddy.config` — `ServerSettings` (`server` section: CORS + the retained
+  operational guards), `load_server_settings`; `dotenv_filtering="match_prefix"`
+  so one shared `.env` can hold all sections. See `docs/config.md`.
+- Test inventory: unit (`packages/embeddy/tests/`), contract/ASGI/CLI
+  (`tests/contract/`, tagged `[integration]`), keystone e2e, eval gate.
+
+Earlier milestones: M1 (keystone), M2 (chonkai v1), M3 (real embedding
+providers + MRL), M4 (storage & search core, pipeline, eval gate).
+
+M4 foundation (frozen protocols + core):
 
 - `embeddy.protocol` — typed records (`EmbedInput`, `Vector`, `StoredChunk`,
   `ScoredDocument` w/ `.metric`, `CollectionStats`, `SourceMetadata`,

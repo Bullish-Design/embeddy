@@ -44,3 +44,20 @@ class RerankError(ProviderError):
 class ModelNotLoadedError(ProviderError):
     """A lazy provider method was called and the model/extra is not
     installed (e.g. `embeddy[local]` missing while using LocalProvider)."""
+
+
+class ClientError(EmbeddyError):
+    """The httpx EmbeddyClient (embeddy/client.py) got a non-2xx response
+    or failed to reach the server. Carries the HTTP status and the server's
+    structured error detail when it was JSON."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        detail: object = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.detail = detail
