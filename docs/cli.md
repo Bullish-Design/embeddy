@@ -8,8 +8,10 @@ options and env vars; `--base-url` beats `EMBEDDY_SERVER_BASE_URL`, which
 beats `http://127.0.0.1:8000`).
 
 Install: `pip install "embeddy[server]"` provides the `embeddy` console
-script (typer is a `server` extra). Without extras you can still run
-`python -m embeddy.cli`.
+script (typer is a `server` extra). typer is imported at module level in
+`embeddy/cli.py` (the CLI extra's entry point), so both the console script
+and `python -m embeddy.cli` require the `server` extra; with zero extras
+`import embeddy` stays clean and neither entry point imports.
 
 ## Commands
 

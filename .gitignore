@@ -55,6 +55,8 @@ coverage.xml
 *.py.cover
 .hypothesis/
 .pytest_cache/
+# pytest-benchmark's per-run result cache (benchmarks/ is an explicit opt-in dir)
+.benchmarks/
 cover/
 
 # Translations

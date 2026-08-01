@@ -1,7 +1,44 @@
-# Benchmarks — search backends (Phase-4 spike, plan §6 work item 6)
+# Benchmarks
+
+Two different things live here:
+
+| Path | What | Tooling |
+|------|------|---------|
+| `bench_backends.py` | **Phase-4 SPIKE** (plan §6 work item 6): sqlite-vec vs LanceDB at 100k/1M vectors → the default-backend decision (`docs/decisions/0001`). Spike-only deps (lancedb/pyarrow), manually installed, NOT in uv.lock. | standalone script |
+| `test_chunk_quality.py` | **Phase-7 chunk-quality harness** (plan §9 work item 4): chonkai chunker throughput on deterministic corpora + the chunk invariants. | pytest-benchmark |
+| `test_search_ingest.py` | **Phase-7 search/ingest/resource harness**: embeddy ingest throughput, search latency (vector/hybrid/filtered), peak-RSS resource profile, on a deterministic synthetic corpus (FakeProvider + real SqliteStore). | pytest-benchmark + psutil |
+
+## Never the default suite
+
+`benchmarks/` is OUTSIDE pytest `testpaths` (root `pyproject.toml`), so
+`uv run pytest` never collects it — the default gate stays ~10s. The Phase-7
+harness runs only when requested (local) or in the optional CI job
+(`continue-on-error: true`; plan §9 "optional job").
+
+## Phase-7 harness — run it
+
+Tooling decision: pytest-benchmark + psutil in the root dev group
+(`docs/decisions/0002-benchmark-tooling.md`).
+
+```bash
+# inside `devenv shell` — with the canonical library path prefix (numpy needs
+# libz, not just libstdc++, on NixOS):
+export LD_LIBRARY_PATH="$(dirname $(find /nix/store -maxdepth 3 -name 'libstdc++.so.6' | head -1)):$(dirname $(find /nix/store -maxdepth 3 -name 'libz.so.1' | head -1))"
+
+uv run pytest benchmarks/ --no-cov                          # invariants + timing
+uv run pytest benchmarks/ --no-cov --benchmark-only         # timing only
+uv run pytest benchmarks/test_search_ingest.py -s --no-cov  # see the p50/p95 + RSS prints
+```
+
+Assertions are correctness/regression checks only (chunk invariants,
+ingest stats, result shape, a generous 2 GiB peak-RSS bound) — NEVER
+wall-clock thresholds. Timing output is informational; the numbers are the
+measured record, not a gate (timing is CI-noise).
+
+## Phase-4 spike — the original backend decision benchmark
 
 `bench_backends.py` compares the two embedded vector-store candidates that
-decide the default backend (plan §4/§8):
+decided the default backend:
 
 | Backend | Role |
 |---------|------|
@@ -10,7 +47,7 @@ decide the default backend (plan §4/§8):
 
 The result is recorded in `docs/decisions/0001-default-search-backend.md`.
 
-## Why LanceDB is not in uv.lock
+### Why LanceDB is not in uv.lock
 
 LanceDB is a **spike-only dependency**: `pip install lancedb` into the dev
 venv by hand (`uv run pip install lancedb`). It is NOT a project dependency —
@@ -18,10 +55,7 @@ venv by hand (`uv run pip install lancedb`). It is NOT a project dependency —
 imports it lazily inside `bench_lancedb()` and ty is configured to ignore the
 spike module (`[tool.ty.overrides]` in the root pyproject, `benchmarks/**`).
 
-## Running
-
-Inside `devenv shell`, with the canonical library path prefix (numpy needs
-libz, not just libstdc++):
+### Running the spike
 
 ```bash
 export LD_LIBRARY_PATH="$(dirname $(find /nix/store -maxdepth 3 -name 'libstdc++.so.6' | head -1)):$(dirname $(find /nix/store -maxdepth 3 -name 'libz.so.1' | head -1))"
@@ -35,9 +69,9 @@ warm search latency (p50/p95 over 60 queries) for unfiltered / filtered
 (chunk_type + content_type EQ) / prefix-filtered (path) top-k, plus LanceDB's
 FTS-index build and hybrid latency.
 
-## Measured results (2026-08-01, this machine: 8 cores, 62 GB RAM)
+### Measured results (2026-08-01, this machine: 8 cores, 62 GB RAM)
 
-### n=100,000, dim=256, top_k=50
+#### n=100,000, dim=256, top_k=50
 
 | metric | sqlite-vec | LanceDB |
 |--------|-----------|---------|
@@ -49,7 +83,7 @@ FTS-index build and hybrid latency.
 | FTS index build (s) | — | 0.5 |
 | hybrid ms (p50/p95) | — | 56.5 / 68.5 |
 
-### n=1,000,000, dim=256, top_k=50
+#### n=1,000,000, dim=256, top_k=50
 
 | metric | sqlite-vec | LanceDB |
 |--------|-----------|---------|
@@ -67,7 +101,7 @@ linearly with N — ~0.7 s / 0.4 s at 1M×256 — and neither is interactive-
 critical for a personal-project corpus. sqlite-vec is ~2× slower at 1M and
 ~2.4× slower to ingest (text-serialized vectors), within ~20% on disk.
 
-## Recall note
+### Recall note
 
 Both backends pre-filter during the scan: a restrictive filter returns the
 full top_k. For sqlite-vec this required the vec0 auxiliary columns

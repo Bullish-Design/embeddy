@@ -25,6 +25,13 @@ dev = [
   "fastapi>=0.110,<1",
   "uvicorn>=0.29,<1",
   "typer>=0.12,<1",
+  # pytest-benchmark + psutil are the benchmark-layer tools (plan §11); the
+  # httpx/fastapi precedent ("an embeddy extra but a dev/test dependency").
+  # They never run in the default suite — benchmarks/ is OUTSIDE pytest
+  # testpaths — and are only exercised by the optional benchmark job
+  # (docs/decisions/0002-benchmark-tooling.md).
+  "pytest-benchmark>=4.0,<5",
+  "psutil>=5.9,<7",
 ]
 
 [tool.pytest.ini_options]
