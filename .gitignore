@@ -212,8 +212,8 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-# Scratch/planning files
-.scratch/
+# Scratch/planning files — now tracked (greenfield rewrite workspace)
+# .scratch/ (removed from ignore 2026-08-01)
 
 # Devenv
 .devenv*
