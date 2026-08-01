@@ -10,6 +10,15 @@ Ported from the Phase-0 spike (`spikes/protocols.py`). CONCEPT §5.2 / §6:
     unit-norm, and cosine scoring assumes unit vectors).
   * Role -> instruction resolution happens HERE (`resolve_instruction`), in
     the caller; providers only ever receive a resolved string (fixes H2).
+
+Registry facts (CONCEPT §6.1) were re-verified against the HF model cards
+on 2026-08-01: dimensions and context lengths match the table; instruction
+strings are CARD-EXACT (the `config_sentence_transformers.json` values for
+Qwen3-0.6B / harrier-0.6b; `""` where the card registers no prompt for a
+role). The provider maps a resolved string back to a registered prompt name
+by VALUE, so both the ST `prompt_name` (harrier: web_search_query/...) and
+`prompt` (Qwen3: query/document) conventions work from one registry
+dictionary (providers/local.py).
 """
 
 from __future__ import annotations
@@ -95,26 +104,122 @@ def _normalize(vec: np.ndarray) -> Vector:
 
 
 # ---------------------------------------------------------------------------
-# Minimal registry (Phase 1). The full CONCEPT §6.1 table lands in Phase 3.
+# Full registry (CONCEPT §6.1, verified 2026-08-01 against HF model cards).
+# Role keys are the embeddy semantic roles (query/document/retrieval); values
+# are the model card's exact prompt strings ("" = no prompt for that role).
 # ---------------------------------------------------------------------------
 
+_QWEN3_QUERY = (
+    "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:"
+)
+
 DEFAULT_MODELS: dict[str, ModelSpec] = {
-    # Text default (CONCEPT §9.5): proven, ungated, MRL-capable. Qwen3 model
-    # card uses "query"/"document" instruction types; "retrieval" is the
-    # sentence-transformers retrieval role and shares the query prompt.
+    # Text default (CONCEPT §9.5): proven, ungated, MRL-capable, Apache-2.0.
+    # Card-exact prompts (config_sentence_transformers.json): query gets the
+    # "Instruct: ...\nQuery:" wrapper, document gets NO prompt ("").
     "Qwen/Qwen3-Embedding-0.6B": ModelSpec(
         id="Qwen/Qwen3-Embedding-0.6B",
         native_dimension=1024,
         mrl_range=range(32, 1025),
         context_length=32768,
         instructions={
-            "query": "Given a web search query, retrieve the relevant "
-            "passages that answer the query",
-            "document": "Represent this document for retrieval",
-            "retrieval": "Given a web search query, retrieve the relevant "
-            "passages that answer the query",
+            "query": _QWEN3_QUERY,
+            "retrieval": _QWEN3_QUERY,
+            "document": "",
         },
         license="Apache-2.0",
+    ),
+    # Multimodal default (CONCEPT §6.1). local-provider only in v1 (CONCEPT
+    # §7: images are not expressible over OpenAI /v1/embeddings). The ST card
+    # registers a single "default" prompt applied automatically; we register
+    # it under both semantic roles so role resolution always yields a string.
+    "Qwen/Qwen3-VL-Embedding-2B": ModelSpec(
+        id="Qwen/Qwen3-VL-Embedding-2B",
+        native_dimension=2048,
+        mrl_range=range(64, 2049),
+        context_length=32768,
+        instructions={
+            "query": "Represent the user's input.",
+            "retrieval": "Represent the user's input.",
+            "document": "Represent the user's input.",
+        },
+        license="Apache-2.0",
+    ),
+    # High-quality text option (CONCEPT §6.1/§9.5). NOT the default: newer,
+    # single-source-corroborated, non-MRL. ST pooling VERIFIED 2026-08-01
+    # (last-token + include_prompt + Normalize — matches the card). The card's
+    # ST prompt names are web_search_query/sts_query/bitext_query; the query
+    # string is registered under the semantic roles and matched by value in
+    # the provider (prompt_name convention), documents get no prompt.
+    "microsoft/harrier-oss-v1-0.6b": ModelSpec(
+        id="microsoft/harrier-oss-v1-0.6b",
+        native_dimension=1024,
+        mrl_range=None,
+        context_length=32768,
+        instructions={
+            "query": (
+                "Instruct: Given a web search query, retrieve relevant "
+                "passages that answer the query\nQuery: "
+            ),
+            "retrieval": (
+                "Instruct: Given a web search query, retrieve relevant "
+                "passages that answer the query\nQuery: "
+            ),
+            "document": "",
+        },
+        license="MIT",
+    ),
+    "microsoft/harrier-oss-v1-270m": ModelSpec(
+        id="microsoft/harrier-oss-v1-270m",
+        native_dimension=640,
+        mrl_range=None,
+        context_length=32768,
+        instructions={
+            "query": (
+                "Instruct: Given a web search query, retrieve relevant "
+                "passages that answer the query\nQuery: "
+            ),
+            "retrieval": (
+                "Instruct: Given a web search query, retrieve relevant "
+                "passages that answer the query\nQuery: "
+            ),
+            "document": "",
+        },
+        license="MIT",
+    ),
+    "microsoft/harrier-oss-v1-27b": ModelSpec(
+        id="microsoft/harrier-oss-v1-27b",
+        native_dimension=5376,
+        mrl_range=None,
+        context_length=32768,
+        instructions={
+            "query": (
+                "Instruct: Given a web search query, retrieve relevant "
+                "passages that answer the query\nQuery: "
+            ),
+            "retrieval": (
+                "Instruct: Given a web search query, retrieve relevant "
+                "passages that answer the query\nQuery: "
+            ),
+            "document": "",
+        },
+        license="MIT",
+    ),
+    # Sparse hybrid (Qdrant path, CONCEPT §6.1): dense+sparse, 8192 ctx
+    # (verified sentence_bert_config.json max_seq_length). No MRL. The card
+    # defines only the query prefix; documents get no prompt. No ST-registered
+    # prompt names, so the provider applies the string via `prompt=` directly.
+    "BAAI/bge-m3": ModelSpec(
+        id="BAAI/bge-m3",
+        native_dimension=1024,
+        mrl_range=None,
+        context_length=8192,
+        instructions={
+            "query": "Represent this sentence for searching relevant passages: ",
+            "retrieval": "Represent this sentence for searching relevant passages: ",
+            "document": "",
+        },
+        license="MIT",
     ),
 }
 

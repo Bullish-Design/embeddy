@@ -13,10 +13,14 @@ dev = [
   "hypothesis>=6.100,<7",
   "ruff>=0.6,<1",
   "ty>=0.0.56,<1",
+  # httpx is an embeddy extra (embeddy[client]) but a dev/test dependency for
+  # the HTTPProvider wire tests (plan §11: httpx MockTransport). The library
+  # itself imports httpx lazily, so zero-extras `import embeddy` stays clean.
+  "httpx>=0.27,<1",
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "packages/chonkai/tests"]
+testpaths = ["tests", "packages/chonkai/tests", "packages/embeddy/tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 # Coverage gate: raised toward the plan §11 targets (≥90% core / ≥95% chunkers)
@@ -44,6 +48,26 @@ exclude = [".scratch", "packages/chonkai/tests/fixtures"]
 # these modules; not installed in the dev env, so the import cannot resolve.
 # Ty's defaults are strict-by-default (replaces the mypy strict config).
 include = ["**/docling.py", "**/tokens.py"]
+rules = { unresolved-import = "ignore" }
+
+[[tool.ty.overrides]]
+# embeddy[local] (sentence-transformers) and embeddy[client] (httpx) extras —
+# imported lazily inside load()/encode()/rerank(); the dev env may not have
+# the extras installed, so the imports cannot resolve (the docling pattern).
+include = [
+  "**/providers/local.py",
+  "**/providers/http.py",
+  "**/providers/rerank.py",
+]
+rules = { unresolved-import = "ignore" }
+
+[[tool.ty.overrides]]
+# The LocalProvider image-decode tests import PIL (an optional ST dependency,
+# importorskip'd at runtime) — not installed in the dev env.
+include = [
+  "packages/embeddy/tests/test_local_provider.py",
+  "tests/slow/test_slow_multimodal.py",
+]
 rules = { unresolved-import = "ignore" }
 
 [tool.ruff]

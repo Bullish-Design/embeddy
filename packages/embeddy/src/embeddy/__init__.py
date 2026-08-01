@@ -4,6 +4,18 @@ Consumes chonkai (one-way dependency). Importable with zero extras
 (IMPLEMENTATION_PLAN §2) — heavy providers (local/http) import lazily.
 """
 
+from embeddy.budget import DEFAULT_HEADROOM_TOKENS, chunk_budget
+from embeddy.config import EmbedderSettings, load_settings
+from embeddy.errors import (
+    EmbeddyError,
+    HTTPProviderError,
+    ModelNotLoadedError,
+    ProviderError,
+    ProviderInputError,
+    RerankError,
+    WrongDimensionError,
+)
+from embeddy.protocol.rerank import RerankerProvider, RerankHit
 from embeddy.protocol.types import (
     CollectionStats,
     EmbedInput,
@@ -17,6 +29,15 @@ from embeddy.protocol.types import (
     assert_unit_vector,
     cosine_similarity,
     normalize_l2,
+)
+from embeddy.providers import (
+    CrossEncoderReranker,
+    FakeProvider,
+    HTTPProvider,
+    HTTPReranker,
+    LocalProvider,
+    build_embeddings_request,
+    build_provider,
 )
 from embeddy.registry import (
     DEFAULT_MODELS,
@@ -33,23 +54,43 @@ __version__ = "0.1.0"
 
 __all__ = [
     "CollectionStats",
+    "CrossEncoderReranker",
+    "DEFAULT_HEADROOM_TOKENS",
     "DEFAULT_MODELS",
     "EmbedInput",
+    "EmbedderSettings",
+    "EmbeddyError",
+    "FakeProvider",
+    "HTTPProvider",
+    "HTTPProviderError",
+    "HTTPReranker",
     "ImageInput",
+    "LocalProvider",
     "Metric",
+    "ModelNotLoadedError",
     "ModelSpec",
+    "ProviderError",
+    "ProviderInputError",
     "RRF_DEFAULT_K",
     "RegistryError",
+    "RerankError",
+    "RerankHit",
+    "RerankerProvider",
     "ScoredDocument",
     "SourceId",
     "SourceMetadata",
     "StoredChunk",
     "Vector",
+    "WrongDimensionError",
     "assert_unit_vector",
+    "build_embeddings_request",
+    "build_provider",
+    "chunk_budget",
     "cosine_similarity",
     "fuse_rrf",
     "fuse_weighted",
     "get_model",
+    "load_settings",
     "normalize_l2",
     "resolve_dimension",
     "resolve_instruction",

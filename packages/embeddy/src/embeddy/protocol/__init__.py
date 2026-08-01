@@ -1,6 +1,8 @@
-"""Protocol definitions: types + EmbeddingProvider (keystone, M1 draft)."""
+"""Protocol definitions: types + EmbeddingProvider (keystone, M1 draft) +
+RerankerProvider (M3 draft)."""
 
 from embeddy.protocol.embedding import EmbeddingProvider
+from embeddy.protocol.rerank import RerankerProvider, RerankHit
 from embeddy.protocol.types import (
     CollectionStats,
     EmbedInput,
@@ -22,6 +24,8 @@ __all__ = [
     "EmbeddingProvider",
     "ImageInput",
     "Metric",
+    "RerankHit",
+    "RerankerProvider",
     "ScoredDocument",
     "SourceId",
     "SourceMetadata",
