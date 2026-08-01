@@ -5,7 +5,13 @@ Consumes chonkai (one-way dependency). Importable with zero extras
 """
 
 from embeddy.budget import DEFAULT_HEADROOM_TOKENS, chunk_budget
-from embeddy.config import EmbedderSettings, load_settings
+from embeddy.config import (
+    DEFAULT_PIPELINE_CONCURRENCY,
+    EmbedderSettings,
+    PipelineSettings,
+    load_pipeline_settings,
+    load_settings,
+)
 from embeddy.errors import (
     EmbeddyError,
     HTTPProviderError,
@@ -14,6 +20,16 @@ from embeddy.errors import (
     ProviderInputError,
     RerankError,
     WrongDimensionError,
+)
+from embeddy.pipeline import (
+    FileEvent,
+    FileStatus,
+    IngestPipeline,
+    IngestStats,
+    PipelineError,
+    SourceError,
+    SourcePhase,
+    generate_source_id,
 )
 from embeddy.protocol.rerank import RerankerProvider, RerankHit
 from embeddy.protocol.types import (
@@ -57,8 +73,19 @@ __all__ = [
     "CrossEncoderReranker",
     "DEFAULT_HEADROOM_TOKENS",
     "DEFAULT_MODELS",
+    "DEFAULT_PIPELINE_CONCURRENCY",
     "EmbedInput",
     "EmbedderSettings",
+    "FileEvent",
+    "FileStatus",
+    "IngestPipeline",
+    "IngestStats",
+    "PipelineError",
+    "PipelineSettings",
+    "SourceError",
+    "SourcePhase",
+    "generate_source_id",
+    "load_pipeline_settings",
     "EmbeddyError",
     "FakeProvider",
     "HTTPProvider",

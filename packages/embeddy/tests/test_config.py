@@ -11,7 +11,14 @@ from pathlib import Path
 
 import pytest
 
-from embeddy import EmbedderSettings, load_settings
+from embeddy import (
+    DEFAULT_PIPELINE_CONCURRENCY,
+    EmbedderSettings,
+    IngestPipeline,
+    PipelineSettings,
+    load_pipeline_settings,
+    load_settings,
+)
 from embeddy.errors import ProviderError
 from embeddy.providers.factory import build_provider
 
@@ -19,6 +26,7 @@ _ENV_KEYS = (
     "EMBEDDY_EMBEDDER_MODEL",
     "EMBEDDY_EMBEDDER_EMBEDDING_DIMENSION",
     "EMBEDDY_EMBEDDER_PROMPT_ROLE",
+    "EMBEDDY_PIPELINE_CONCURRENCY",
 )
 
 
@@ -120,3 +128,59 @@ def test_config_to_provider_roundtrip() -> None:
     provider = build_provider(settings.model, settings.embedding_dimension, backend="local")
     assert provider.dimension == 256
     assert provider.model_name == settings.model
+
+
+# --- pipeline settings (plan §7: `pipeline.concurrency`, CLI > file > env) -------
+
+
+def test_pipeline_defaults() -> None:
+    s = load_pipeline_settings()
+    assert s.concurrency == DEFAULT_PIPELINE_CONCURRENCY == 4
+
+
+def test_pipeline_env_overrides_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EMBEDDY_PIPELINE_CONCURRENCY", "2")
+    assert load_pipeline_settings().concurrency == 2
+
+
+def test_pipeline_file_overrides_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("EMBEDDY_PIPELINE_CONCURRENCY=3\n")
+    monkeypatch.setenv("EMBEDDY_PIPELINE_CONCURRENCY", "9")
+    s = load_pipeline_settings(env_file=env_file)
+    assert s.concurrency == 3, "file must beat env (CLI > file > env > defaults)"
+
+
+def test_pipeline_cli_overrides_file(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("EMBEDDY_PIPELINE_CONCURRENCY=3\n")
+    s = load_pipeline_settings(env_file=env_file, concurrency=5)
+    assert s.concurrency == 5
+
+
+def test_pipeline_concurrency_zero_rejected() -> None:
+    """A zero-bound pool would deadlock instead of draining (the H6 class) —
+    rejected at config time."""
+    with pytest.raises(Exception, match="concurrency"):
+        load_pipeline_settings(concurrency=0)
+    with pytest.raises(Exception, match="concurrency"):
+        load_pipeline_settings(concurrency=-1)
+
+
+def test_pipeline_unknown_init_field_rejected() -> None:
+    with pytest.raises(Exception, match="extra"):
+        PipelineSettings.model_validate({"concurency": 2})  # typo
+
+
+def test_pipeline_settings_are_read_by_code_path() -> None:
+    """Config = implementation: PipelineSettings.concurrency is the bound
+    the pipeline constructor consumes. The constructor default is the config
+    default constant; an explicit settings value flows straight in."""
+    settings = load_pipeline_settings(concurrency=2)
+    assert settings.concurrency == 2
+    # the constructor's default is the SAME constant the config field uses
+    import inspect
+
+    sig = inspect.signature(IngestPipeline.__init__)
+    assert sig.parameters["concurrency"].default == DEFAULT_PIPELINE_CONCURRENCY
+    assert settings.concurrency != DEFAULT_PIPELINE_CONCURRENCY

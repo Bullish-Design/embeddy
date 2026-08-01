@@ -20,7 +20,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "packages/chonkai/tests", "packages/embeddy/tests"]
+testpaths = ["tests", "eval", "packages/chonkai/tests", "packages/embeddy/tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 # Coverage gate: raised toward the plan §11 targets (≥90% core / ≥95% chunkers)
@@ -82,7 +82,7 @@ rules = { unresolved-import = "ignore", invalid-type-form = "ignore" }
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-src = ["packages/chonkai/src", "packages/embeddy/src", "tests", "benchmarks"]
+src = ["packages/chonkai/src", "packages/embeddy/src", "tests", "eval", "benchmarks"]
 # .scratch/ is the planning workspace (concept/plan/spikes) — intentionally not linted.
 # test fixtures hold intentionally-broken/foreign-language samples (data, not code).
 exclude = [".scratch", "packages/chonkai/tests/fixtures"]
