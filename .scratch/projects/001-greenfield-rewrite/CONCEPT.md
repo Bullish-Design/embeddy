@@ -129,7 +129,7 @@ client, CLI. Must never import embeddy.
 |---------|---------|-----|
 | Rich-doc parsing | **Docling** | Best-in-class PDF/DOCX/HTML. It *is* the parser; chonkai bridges to its `Document` model. |
 | Text chunking | **semchunk** | Token-accurate, semantic boundaries, offsets, overlap. |
-| Code chunking | **tree-sitter** + **tree-sitter-language-pack** | 306 precompiled grammars, MIT. `get_parser()` for every code content type. |
+| Code chunking | **tree-sitter** + **tree-sitter-language-pack** | ~11 bundled grammars (all 10 v1 targets — offline-safe), MIT; 306 more via lazy download manifest. `get_parser()` for every code content type. |
 | Token counting | **tiktoken** / HF **tokenizers** | Token-accurate counting for chunk budgets. |
 
 ### 4.3 The chunker model and invariants
@@ -172,28 +172,52 @@ probing on 2026-07-31:
   clean one-definition-per-chunk mapping.
 - For true per-definition chunking, use the separate top-level `structure`
   (`list[StructureItem]`) each carrying `name`, `kind`, `span`, `body_span`,
-  `decorators`, `children`, `signature`, `visibility` — this is where decorators
-  stay attached and where function/class/module granularity actually comes from.
-  Enable it with `ProcessConfig(structure=True, symbols=True, docstrings=True)`.
+  `children` — this is where function/class/module granularity actually comes
+  from. Enable it with `ProcessConfig(structure=True, symbols=True,
+  docstrings=True)`.
+- **Correction (Phase-0 spike, 1.13.7):** `StructureItem.decorators` — and
+  `.visibility`/`.signature`/`.doc_comment` — are **inert**: declared but never
+  populated (probed for python, javascript, typescript, rust), and the item
+  `.span` excludes the decorator lines. Decorators MUST be recovered from the
+  raw parse tree and prepended to the chunk content: Python wraps definitions
+  in a `decorated_definition` node (decorators are its children); Rust emits
+  `attribute_item` nodes as leading **siblings** of the definition. The raw
+  parser is **load-bearing**, not a churn contingency.
+- **Operational facts (verified in the spike):** `chunk_max_size` is a **byte**
+  budget — the token invariant lives on `ValidatedChunker` (byte window =
+  coarse split, tokens = the contract). `StructureKind` is a pyo3 enum (`str()`
+  → `'Function'`, no `.value`). `ProcessResult` is attribute-access only
+  (`r.structure` / `r.chunks`, not a dict). All lines/spans are **0-based** —
+  convert to 1-based at the public boundary. A structure `span` may exclude the
+  trailing newline — slice `span.start_byte:end_byte`, never the raw source
+  length. All 10 target grammars are **bundled** (offline-safe); the 296-grammar
+  manifest is lazy (see below).
 - Syntax-error recovery: broken code still parses; `metadata.has_error_nodes`
   flags it — no paragraph fallback (fixes the old SyntaxError path).
-- **Grammars are fetched at runtime** by a DownloadManager (probing hit
-  `Download error: Language not available for download`). This means a
-  cache-dir, offline/air-gapped behavior, and checksum verification are
-  operational concerns (§9.3), despite "306 precompiled grammars."
+- **Grammars: 10 targets are BUNDLED, 306 is the manifest.** The wheel ships
+  ~11 precompiled grammars (`available_languages()`) — all 10 chonkai target
+  languages are among them, so v1 ingest is **offline-safe by default** with no
+  cache dir. The other 296 (`manifest_languages()`) fetch lazily at first use
+  via the DownloadManager; unknown language → `DownloadError`. The
+  cache-dir/offline/checksum concerns (§9.3) apply only to non-target
+  languages.
 
-**Decision (confirm in the Phase-0 spike):** build the code chunker on
-`structure` (per-definition, decorators attached, granularity real →
-implements the dead `python_granularity` config, fixes H3), using
-`chunk_max_size` windowing only to split an oversized single definition (fixes
-H5). Do **not** rely on `process()`'s default chunk stream.
+**Decision (confirmed in the Phase-0 spike):** build the code chunker on
+`structure` (per-definition, granularity real → implements the dead
+`python_granularity` config, fixes H3), with the raw parser supplying
+decorators (fixes the decorator-orphaning half of H3), using `chunk_max_size`
+windowing only to split an oversized single definition (fixes H5). Do **not**
+rely on `process()`'s default chunk stream.
 
 Granularity (`function` / `class` / `module`) maps to `StructureItem.kind`
 selection, not to a `process()` config flag.
 
 Risk: language-pack is young (441 stars, repo now `xberg-io/…`) with a moving
-high-level API. Mitigate with a thin adapter and a pinned version; fallback is
-the stable raw tree-sitter API (`get_parser` + node walking).
+high-level API. Mitigate with a thin adapter and a pinned version. The raw
+tree-sitter API (`get_parser` + node walking) is not a fallback — it is
+**already load-bearing** for decorator recovery and stays a thin seam in
+chonkai; both paths share the same grammar registry and work offline for the
+10 target languages.
 
 ### 4.5 Markdown and text chunking
 
@@ -526,7 +550,10 @@ registry before each release.
 ### 9.3 Dependencies to watch
 
 - `tree-sitter-language-pack`: young, fast-moving high-level API — pin and
-  wrap (raw tree-sitter as fallback).
+  wrap; the raw tree-sitter API is **load-bearing** (decorator recovery), not a
+  fallback. Only ~11 grammars are precompiled into the wheel — all 10 v1
+  targets are bundled (offline-safe), so the cache-dir/offline concern applies
+  only to the other 296 languages in the lazy download manifest.
 - `sqlite-vec`: pre-v1 with announced breaking changes — isolate behind
   `Searchable`.
 - `LanceDB`: 0.x API churn — prototype before any commitment.
@@ -551,6 +578,16 @@ does not regress. Ship a small fixed-corpus harness (corpus + queries + qrels) t
 reports **nDCG@k / recall@k** across model, chunker, and fusion changes, wired as a
 CI gate (or at least a pre-release gate at M4/M6). This is separate from the
 chunk-quality harness (§10.10) and from resource benchmarks.
+
+**Scope (post-spike):** the harness's fake-provider gate is **MECHANICAL** —
+regression detection + full determinism, not a measure of absolute quality. It
+uses a fixed **20-doc corpus** (fictional "acme" platform, 8 queries, qrels) and
+a deterministic `FakeProvider` (sha256-seeded signed-hash TF-IDF); baseline mean
+nDCG@10 = 0.599 / recall@10 = 0.875 vs random control 0.234 / 0.438. The
+**0.50 nDCG@10 / 0.80 recall@10 thresholds are derived from that fixed corpus**
+and recomputable via `eval/run_eval.py`. Absolute retrieval quality across real
+models is gated by the Phase-3 `[slow]` sentence-transformers integration tests,
+not by this gate.
 
 ### 9.7 M-findings disposition
 
@@ -607,8 +644,9 @@ crash-prevention (OOM) control, not a security control.
   multimodal, CrossEncoder rerankers.
 - Docling — rich-document parsing (64k stars, extremely active).
 - semchunk — token-accurate text chunking (used by Docling).
-- tree-sitter + tree-sitter-language-pack — polyglot code chunking (306
-  grammars, MIT).
+- tree-sitter + tree-sitter-language-pack — polyglot code chunking (all 10
+  target grammars bundled offline; 306-grammar lazy download manifest for the
+  rest).
 
 **Own (the opinionation):**
 

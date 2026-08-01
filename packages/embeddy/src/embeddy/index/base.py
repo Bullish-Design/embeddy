@@ -1,0 +1,100 @@
+"""Searchable — the storage protocol, INCLUDING source operations.
+
+Ported from the Phase-0 spike (`spikes/protocols.py`). Drafted at M1, FROZEN
+at M4 (IMPLEMENTATION_PLAN §12). Every backend implements THIS contract —
+sqlite-vec+FTS5 is the default, Qdrant the scale path. Source operations are
+part of the protocol so the Qdrant adapter has a defined contract (not a
+sqlite-only side layer — CONCEPT §3.3, §5.4).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
+
+from embeddy.protocol.types import (
+    CollectionStats,
+    ScoredDocument,
+    SourceId,
+    SourceMetadata,
+    StoredChunk,
+    Vector,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SearchFilters:
+    """Compiled-to-SQL pre-filters (never post-filter over-fetch — fixes M3).
+
+    `metadata_match` is a list of (field, value) pairs; backends compile it
+    into the WHERE clause of the pre-filter join. Typed values (str) — no
+    dict[str, Any]. Expected to grow (range filters) before the M4 freeze.
+    """
+
+    content_types: tuple[str, ...] = ()
+    source_path_prefix: str | None = None
+    chunk_types: tuple[str, ...] = ()
+    metadata_match: tuple[tuple[str, str], ...] = ()
+
+    @classmethod
+    def from_mapping(cls, **pairs: str) -> SearchFilters:
+        return cls(metadata_match=tuple(sorted(pairs.items())))
+
+    def is_empty(self) -> bool:
+        return not (
+            self.content_types or self.source_path_prefix or self.chunk_types or self.metadata_match
+        )
+
+
+@runtime_checkable
+class Searchable(Protocol):
+    """Storage contract. All methods async; backends own their connections."""
+
+    # --- chunks ----------------------------------------------------------
+    async def add(
+        self,
+        collection: str,
+        chunks: list[StoredChunk],
+        vectors: list[Vector],
+    ) -> None: ...
+    async def delete(self, collection: str, chunk_ids: list[str]) -> None: ...
+
+    # --- search ----------------------------------------------------------
+    async def search_vector(
+        self,
+        collection: str,
+        query_vector: Vector,
+        filters: SearchFilters,
+        top_k: int,
+    ) -> list[ScoredDocument]: ...
+    async def search_fts(
+        self,
+        collection: str,
+        query: str,
+        filters: SearchFilters,
+        top_k: int,
+    ) -> list[ScoredDocument]: ...
+
+    # --- collections -----------------------------------------------------
+    async def stats(self, collection: str) -> CollectionStats: ...
+
+    # --- sources (first-class — CONCEPT §3.3) ----------------------------
+    async def upsert_source(self, collection: str, source: SourceMetadata) -> SourceId: ...
+    async def get_source(self, collection: str, path: str) -> SourceMetadata | None: ...
+    async def reindex_source(
+        self,
+        collection: str,
+        source: SourceMetadata,
+        chunks: list[StoredChunk],
+        vectors: list[Vector],
+    ) -> None:
+        """Atomic swap of a source's chunk set in ONE transaction (fixes H7):
+        on failure the old chunks must remain intact and queryable."""
+        ...
+
+    async def delete_source(self, collection: str, source_id: SourceId) -> None:
+        """Cascade-deletes the source's chunks (chunks.source_id FK
+        ON DELETE CASCADE in the sqlite schema)."""
+        ...
+
+    async def list_sources(self, collection: str) -> list[SourceMetadata]: ...

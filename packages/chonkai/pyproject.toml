@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "chonkai"
+version = "0.1.0"
+description = "Document processing: ingest + parse + chunk, with guaranteed invariants."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+  "pydantic>=2.0,<3",
+  "numpy>=1.26,<3",
+  "tree-sitter>=0.23,<0.26",
+  "tree-sitter-language-pack>=1.13.7,<2",
+  # NOTE: plan §2 said semchunk>=0.5,<1 but no 0.5/0.x-later release exists on
+  # PyPI (versions jump 0.3.2 -> 1.0.0; current line is 4.x). Pin follows the
+  # plan's intent (semchunk as a pinned core dep).
+  "semchunk>=1,<5",
+  "tiktoken>=0.7,<1",
+]
+
+[project.optional-dependencies]
+docling = ["docling>=2.0"]
+tokenizers = ["tokenizers>=0.19"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/chonkai"]

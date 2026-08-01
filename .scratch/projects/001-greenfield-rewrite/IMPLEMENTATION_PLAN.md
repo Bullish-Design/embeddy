@@ -159,21 +159,31 @@ consumes only its public API.
       size-windowed, and `symbols_defined`/`context_path`/`node_types` live on
       `chunk.metadata`, per-window, not one-per-definition — see CONCEPT §4.4):
       - grammar registry: ContentType → language (python, javascript,
-        typescript, rust, go, c, cpp, java, ruby, bash);
+        typescript, rust, go, c, cpp, java, ruby, bash) — all **bundled**
+        (offline-safe), no cache dir needed for v1;
       - use `ProcessConfig(structure=True, symbols=True, docstrings=True)`; map
         `StructureItem` (`.name` → name, `.kind` → chunk_type + granularity,
-        `.context_path`/nesting → parent, `.decorators` kept attached, `.span`/
-        `.body_span` → byte/line ranges);
+        nesting via `children` → parent, `.span`/`.body_span` → byte/line
+        ranges); no `context_path` on `StructureItem` (per-window only);
+      - **decorators are NOT on `StructureItem`** (`.decorators`/`.visibility`/
+        `.signature`/`.doc_comment` are inert in 1.13.7): recover them from the
+        raw parse tree (Python `decorated_definition` wrapper; Rust
+        `attribute_item` siblings) and prepend to chunk content;
       - granularity selection (function/class/module) = `StructureItem.kind`
         filter — implements the dead `python_granularity` config;
-      - oversized single definition → split its body with `chunk_max_size`
-        windowing, carrying context;
+      - **`chunk_max_size` is a BYTE budget** — the `ValidatedChunker` token
+        invariant remains the contract; oversized single definition → split its
+        body with `chunk_max_size` windowing, carrying context;
+      - API facts: `StructureKind` is a pyo3 enum (`str()` → `'Function'`, no
+        `.value`); `ProcessResult` is attribute-access only (not a dict); all
+        lines/spans are **0-based** (convert to 1-based at the public boundary);
+        a structure `span` may exclude the trailing newline (slice
+        `start_byte:end_byte`, not raw source length);
       - `metadata.has_error_nodes` handles broken syntax (no paragraph fallback);
-      - **grammar download/caching**: `process()` fetches grammars at runtime via a
-        DownloadManager — pin the version, set/verify a cache dir, and test the
-        offline path (pre-fetched cache) so ingest doesn't need network;
-      - raw tree-sitter walker (`get_parser` + node walk) as fallback if the
-        high-level API churns.
+      - **raw tree-sitter walker** (`get_parser` + node walk) is **load-bearing**
+        (decorator recovery), not a churn contingency — keep it a thin seam;
+        pin the version; cache-dir/download concerns apply only to the 296
+        non-target languages (lazy `manifest_languages()`).
 - [ ] **`ValidatedChunker`**: enforce invariants on every chunker output:
       non-empty, `tokens <= budget.max_tokens` (post-split if exceeded), line
       ranges present, chunk_type in vocabulary, parent policy per strategy.
@@ -265,7 +275,15 @@ a remote TEI never match exactly) for the same model+instruction.
       metacharacters or reject; documented behavior).
 - [ ] **Typed scores**: `ScoredDocument` carries `metric` (cosine/bm25);
       `min_score` compares against the metric's true semantics (fixes C3).
-- [ ] **aiosqlite** migration of the index (replaces ad-hoc to_thread).
+- [ ] **aiosqlite** migration of the index (replaces ad-hoc to_thread):
+      - **never set `db.isolation_level` from the caller thread** — aiosqlite
+        runs the connection on a worker thread and sqlite3's threading check
+        rejects it (verified in the Phase-0 spike);
+      - atomic reindex expressed with the **implicit transaction** +
+        `commit()`/`rollback()` (spike proves both the success and the
+        mid-swap-failure rollback paths);
+      - vec0 tables with a **TEXT PRIMARY KEY** take no rowid —
+        `INSERT INTO v(id, embedding) VALUES (...)` (verified).
 - [ ] **Search**: `search_vector`, `search_fulltext`, `search_hybrid` (RRF +
       weighted), optional rerank stage (Phase 3 provider); `total_results` =
       pre-truncation count (documented semantics).
@@ -368,6 +386,11 @@ server never drift (one protocol, shared builders); CLI documented.
 - [ ] **Retrieval-quality eval harness** (CONCEPT §9.6): fixed corpus + queries +
       qrels → nDCG@k / recall@k across model/chunker/fusion changes; pre-release
       gate. (First cut can land at M4 to catch retrieval regressions early.)
+      **Scope: the fake-provider gate is MECHANICAL** — regression detection +
+      full determinism, with 0.50 nDCG@10 / 0.80 recall@10 thresholds derived
+      from the fixed 20-doc corpus (`eval/run_eval.py` recomputes them).
+      Absolute retrieval-quality gates live in the Phase-3 `[slow]`
+      sentence-transformers integration tests.
 - [ ] Changelog + versioning policy (release train: chonkai + embeddy together
       initially).
 
