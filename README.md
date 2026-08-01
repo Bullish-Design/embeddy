@@ -37,10 +37,13 @@ Docs: [USER_GUIDE](docs/USER_GUIDE.md) · [INTEGRATION](docs/INTEGRATION.md) ·
 [cli](docs/cli.md) · [eval gate](docs/retrieval-eval.md) ·
 [versioning](docs/versioning.md) · [CHANGELOG](CHANGELOG.md)
 
-## Status — M6 (Phase 7: packaging, docs, benchmarks — release gate)
+## Status — M7 (Phase 8: the scale path — Qdrant adapter + store selection)
 
-M6 is the **release gate** (plan §12): install matrix green, docs match the
-implementation, benchmarks runnable, changelog present.
+M6 was the release gate (install matrix green, docs match, benchmarks
+runnable). M7 ships the post-v1 **scale path** behind the frozen protocols:
+QdrantStore (dense + sparse plumbing + payload filters + quantization +
+source ops), store selection via one config line (`store.url`), and the
+LanceDB decision record (`docs/decisions/0003` + `0004`).
 
 - **Docs**: `docs/USER_GUIDE.md` (how to use), `docs/INTEGRATION.md` (wire
   protocol + upstreams), `docs/ARCHITECTURE.md` (design map),
@@ -85,9 +88,12 @@ strict, ruff clean, install matrix 7/7 rows green, lazy-import audit clean.
 
 Earlier milestones: M1 (keystone), M2 (chonkai v1), M3 (real embedding
 providers + MRL), M4 (storage & search core, pipeline, eval gate), M5
-(server, client, CLI). M6 = this phase (packaging/docs/benchmarks).
+(server, client, CLI), M6 (packaging/docs/benchmarks — release gate).
+M7 = this phase (scale path: Qdrant adapter + store selection).
 
-Phase 8 (post-v1, not implemented): Qdrant adapter, integration adapters.
+Out of scope (not planned): a real learned-sparse encoder (bge-m3), a
+lexical index for the Qdrant FTS path, an async qdrant client, integration
+adapters (Haystack/LlamaIndex).
 
 M4 foundation (frozen protocols + core):
 

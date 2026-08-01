@@ -17,8 +17,9 @@ and `python -m embeddy.cli` require the `server` extra; with zero extras
 
 ### `embeddy serve [--host HOST] [--port PORT] [--env-file FILE]`
 
-Run the API server (uvicorn on `create_app`). The app opens
-`server.store_path` (default `embeddy.db`) and builds the provider from the
+Run the API server (uvicorn on `create_app`). The app opens the store
+selected by `store.url` (the Phase-8 one config line; `None` = the sqlite
+`server.store_path`, default `embeddy.db`) and builds the provider from the
 `embedder` settings.
 
 ```console
@@ -54,7 +55,10 @@ snippet.
 ### `embeddy info [--env-file FILE]`
 
 Print the effective configuration — every section that exists
-(`embedder`, `pipeline`, `server`) — as resolved by the precedence chain.
+(`embedder`, `pipeline`, `server`, `store`) — as resolved by the
+precedence chain. `store.url` shows the effective DSN (the sqlite
+`server.store_path` fallback when unset); when set, `store.backend` shows
+the parsed backend and quantization.
 
 ```console
 $ embeddy info
@@ -62,6 +66,7 @@ embedder.model: Qwen/Qwen3-Embedding-0.6B
 embedder.embedding_dimension: 1024 (native 1024, mrl range(32, 1025))
 embedder.prompt_role: query
 pipeline.concurrency: 4
+store.url: sqlite://embeddy.db
 server.base_url: http://127.0.0.1:8000
 server.store_path: embeddy.db
 server limits: max_body_bytes=10485760 max_embed_inputs=1024 max_top_k=100

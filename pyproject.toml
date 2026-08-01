@@ -25,6 +25,14 @@ dev = [
   "fastapi>=0.110,<1",
   "uvicorn>=0.29,<1",
   "typer>=0.12,<1",
+  # qdrant-client is an embeddy extra (embeddy[qdrant]) but a dev/test
+  # dependency for the Phase-8 QdrantStore tests (plan §10/§11): the
+  # in-memory backend (QdrantClient(":memory:")) is hermetic and offline,
+  # so the adapter runs in the DEFAULT suite. The library imports it lazily
+  # (index/qdrant.py — the providers/* pattern), so zero-extras
+  # `import embeddy` stays clean; the [tool.ty.overrides] entry below covers
+  # the lazy import at type-check time.
+  "qdrant-client>=1.9",
   # pytest-benchmark + psutil are the benchmark-layer tools (plan §11); the
   # httpx/fastapi precedent ("an embeddy extra but a dev/test dependency").
   # They never run in the default suite — benchmarks/ is OUTSIDE pytest
@@ -74,6 +82,14 @@ include = [
   "**/providers/http.py",
   "**/providers/rerank.py",
 ]
+rules = { unresolved-import = "ignore" }
+
+[[tool.ty.overrides]]
+# embeddy[qdrant] (qdrant-client) — imported lazily inside index/qdrant.py
+# methods (the providers/* lazy pattern); the adapter is NOT an entry point,
+# so the module keeps the import lazy and ty gets the same unresolved-import
+# treatment as the providers (plan §10 work item 1).
+include = ["**/index/qdrant.py"]
 rules = { unresolved-import = "ignore" }
 
 [[tool.ty.overrides]]

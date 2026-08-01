@@ -39,7 +39,6 @@ import math
 import re
 import sqlite3
 from collections.abc import Sequence
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -47,7 +46,7 @@ import aiosqlite
 import numpy as np
 import sqlite_vec
 
-from embeddy.index.base import SearchFilters
+from embeddy.index.base import CollectionInfo, SearchFilters, StoreError
 from embeddy.index.filters import compile_filters, sanitize_fts_query
 from embeddy.index.sources import (
     delete_chunk_index_rows,
@@ -134,27 +133,15 @@ _VEC_AUX_COLUMNS = (
 )
 
 
-class StoreError(RuntimeError):
-    """A store-level operation failed (unknown collection, dimension
-    mismatch, missing source, ...)."""
+# StoreError + CollectionInfo moved to embeddy.index.base at Phase 8 so
+# the Qdrant adapter shares the SAME error + record classes (the server's
+# 404/400/501 mapping is backend-agnostic). They remain importable from
+# embeddy.index.sqlite for backward compatibility (module-level re-export).
 
 
 class SchemaError(RuntimeError):
     """The on-disk schema is newer/older than this code; re-ingest from
     source (there is no in-place migration)."""
-
-
-@dataclass(frozen=True, slots=True)
-class CollectionInfo:
-    """One collection row's metadata (the server's GET /api/v1/collections).
-
-    A store EXTRA record (like the create_collection/count_fts methods) —
-    NOT part of the frozen `Searchable` protocol; the server owns collection
-    lifecycle and reads this through `SqliteStore.list_collections`.
-    """
-
-    collection_id: str
-    vector_dimension: int  # the RESOLVED dimension the collection stores
 
 
 async def _fetchall(

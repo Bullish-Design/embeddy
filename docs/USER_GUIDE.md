@@ -16,16 +16,18 @@ pip install chonkai embeddy            # zero extras: core only
 pip install "embeddy[server]"          # + FastAPI server + CLI (typer)
 pip install "embeddy[client]"          # + httpx client
 pip install "embeddy[local]"           # + sentence-transformers (local models)
+pip install "embeddy[qdrant]"          # + qdrant-client (the scale-path storage backend)
 pip install "chonkai[docling]"         # + Docling (PDF/DOCX/HTML parsing)
 pip install "chonkai[tokenizers]"      # + arbitrary-HF tokenizers
 ```
 
 Both packages import cleanly with **zero extras** (`import chonkai`,
 `import embeddy`). Heavy dependencies are lazy: `docling`, `tokenizers`,
-`sentence-transformers` (torch), `fastapi`/`starlette`, `httpx`, `typer` are
-only imported where their extra is installed. The two module-level entry
-points — `embeddy.server` (needs `[server]`) and `embeddy.cli` (needs
-`[server]`) — raise `ImportError` without their extra by design.
+`sentence-transformers` (torch), `fastapi`/`starlette`, `httpx`, `typer`,
+`qdrant_client` are only imported where their extra is installed. The two
+module-level entry points — `embeddy.server` (needs `[server]`) and
+`embeddy.cli` (needs `[server]`) — raise `ImportError` without their extra
+by design.
 
 Extras in the `server` group provide the `embeddy` console script.
 
@@ -173,6 +175,39 @@ for hit in result.results:
 - Filters compile to SQL **pre-filters** (never post-filter over-fetch).
 - Optional rerank stage: retrieve ~50, rerank to top_k.
 
+### Store selection (Phase 8 — one config line)
+
+The `Searchable` backend behind the frozen protocol is chosen with the
+`store.url` config line (`docs/config.md`):
+
+```bash
+EMBEDDY_STORE_URL=qdrant://localhost:6333     # Qdrant backend (qdrant://:memory: = offline test mode)
+EMBEDDY_STORE_URL=qdrant://localhost:6333?quantization=int8   # + scalar quantization
+# unset (default) = the sqlite backend at server.store_path — the bare server is unchanged
+```
+
+`build_store` (`embeddy/index/factory.py`) maps the DSN to `SqliteStore` or
+`QdrantStore`; the server lifespan opens it (`/health/ready` reports
+not-ready + reason when a remote qdrant is unreachable).
+
+**Qdrant caveats** (deliberate, documented in `docs/decisions/0004`):
+
+- **No BM25 engine** — `search_fts` is a pure-Python BM25 scan over the
+  stored payloads (filters are still true pre-filters; scores follow the
+  FTS5 negative-rank convention so `min_score` means the same thing; the
+  `raw` option is a no-op).
+- **No transactions** — `reindex_source` upserts the new chunks first, then
+  deletes stale ids: on failure the OLD chunks remain intact and queryable
+  (a weaker guarantee than sqlite's one-transaction swap; a mid-failure
+  state may briefly show old+new chunks, self-healing on the next reindex).
+- **No auth on qdrant** (trusted tailnet; out of scope) and the qdrant
+  client is synchronous — a remote call blocks the event loop while in
+  flight.
+- **Sparse**: the store's sparse plumbing ships (collections get a `sparse`
+  named vector; `add(..., sparse_vectors=)` / `search_sparse(...)` are
+  exercised by tests with synthetic vectors); dense-only end-to-end today —
+  a real learned-sparse encoder (bge-m3) is out of scope.
+
 ## 3. Serving
 
 ```bash
@@ -224,14 +259,16 @@ server's structured detail.
 
 One precedence: **CLI > file > env > defaults** (via pydantic-settings; the
 dotenv file sits between CLI options and env vars). Sections are `embedder`,
-`pipeline`, `server` — every field is read by a code path (CONCEPT §3.8,
-"config = implementation"). See `docs/config.md` for the full reference.
+`pipeline`, `server`, `store` — every field is read by a code path
+(CONCEPT §3.8, "config = implementation"). See `docs/config.md` for the
+full reference.
 
 ```bash
 EMBEDDY_EMBEDDER_MODEL=microsoft/harrier-oss-v1-0.6b
 EMBEDDY_EMBEDDER_EMBEDDING_DIMENSION=512
 EMBEDDY_PIPELINE_CONCURRENCY=2
 EMBEDDY_SERVER_MAX_TOP_K=25
+EMBEDDY_STORE_URL=qdrant://localhost:6333
 embeddy info --env-file .env
 ```
 
@@ -243,9 +280,13 @@ the documented pre-release gate (thresholds mean nDCG@10 ≥ 0.50, recall@10 ≥
 
 ## 7. Status and roadmap
 
-- M1–M5 complete: keystone e2e, chonkai v1, real providers + MRL, storage &
-  search core + pipeline, server/client/CLI.
-- M6 (this phase): packaging/docs/benchmarks — see `CHANGELOG.md`.
-- Phase 8 (post-v1, **not implemented**): Qdrant adapter (the `qdrant`
-  extra installs `qdrant-client` but no adapter ships yet), integration
-  adapters (Haystack/LlamaIndex).
+- M1–M6 complete: keystone e2e, chonkai v1, real providers + MRL, storage &
+  search core + pipeline, server/client/CLI, packaging/docs/benchmarks.
+- M7 (this phase): the **scale path** — Qdrant adapter behind the frozen
+  `Searchable` protocol (dense + sparse plumbing + payload filters +
+  quantization, source ops), store selection via `store.url`, the LanceDB
+  decision record (`docs/decisions/0003`), and the adapter decisions
+  (`docs/decisions/0004`). See `CHANGELOG.md`.
+- Out of scope (not planned): a real learned-sparse encoder (bge-m3), a
+  lexical index for the Qdrant FTS path (pure-Python BM25 today), an async
+  qdrant client, integration adapters (Haystack/LlamaIndex).

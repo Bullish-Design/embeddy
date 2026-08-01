@@ -2,8 +2,9 @@
 §5.9). "Config = implementation": no field exists unless a code path reads
 it. Phase 5 adds the `pipeline` section (the worker-pool bound); Phase 6 adds
 `server` (the M5 product surface: size limits + CORS + the store the server
-opens + the CLI's server base URL). `store` / `chunk` land with their
-consuming code paths in Phases 6-7.
+opens + the CLI's server base URL); Phase 8 adds `store` (the scale path — one
+config line selects the Searchable backend, CONCEPT §5.4). `chunk` lands with
+its consuming code path when chunking policy becomes config.
 
 Precedence is CLI > file > env > defaults (plan §6 / CONCEPT §3.8):
 `settings_customise_sources` puts the dotenv file BEFORE the environment
@@ -207,3 +208,49 @@ def load_server_settings(env_file: str | Path | None = None, **overrides: Any) -
     target (embeddy/cli.py).
     """
     return ServerSettings(_env_file=str(env_file) if env_file is not None else None, **overrides)
+
+
+# ---------------------------------------------------------------------------
+# The `store` section (Phase 8 — plan §10: the scale path, one config line)
+# ---------------------------------------------------------------------------
+
+DEFAULT_STORE_URL: str | None = None
+"""Default store DSN: None = the server's `store_path` sqlite DSN (bare
+`app = create_app()` keeps opening SqliteStore at `embeddy.db` — Phase 8
+work item 3). Set `store.url` (EMBEDDY_STORE_URL) to switch backends, e.g.
+`qdrant://localhost:6333`, `qdrant://:memory:` (offline test mode) or a
+sqlite DSN (`sqlite://other.db`).
+"""
+
+
+class StoreSettings(_PrecedenceSettings):
+    """The `store` section (CONCEPT §5.9 — store lands with its consuming
+    code path, which is Phase 8): one config line selects the Searchable
+    backend. CONCEPT §5.4: `store: qdrant://...`.
+
+    Config = implementation: `url` is read by the server lifespan (the
+    `build_store` factory — embeddy/index/factory.py) and the CLI's
+    `serve`/`info` commands. None falls back to the server's sqlite
+    `store_path`, so the M5/M6 bare-server behavior is unchanged.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="EMBEDDY_STORE_", extra="forbid", dotenv_filtering="match_prefix"
+    )
+
+    url: str | None = DEFAULT_STORE_URL
+    """Store DSN: `qdrant://host[:port]` / `qdrant://:memory:` / sqlite DSN
+    / bare sqlite path. None = the server's `store_path` sqlite default.
+    qdrant DSNs accept `?quantization=int8|binary|none` (collection-level
+    quantization, applied at create_collection time).
+    """
+
+
+def load_store_settings(env_file: str | Path | None = None, **overrides: Any) -> StoreSettings:
+    """Load STORE settings with CLI > file > env > defaults precedence
+    (the same source order as `load_settings`, EMBEDDY_STORE_ prefix).
+
+    Reads code paths that exist: `url` feeds `build_store` in the server
+    lifespan (embeddy/server.py) and the CLI's `serve`/`info` commands.
+    """
+    return StoreSettings(_env_file=str(env_file) if env_file is not None else None, **overrides)

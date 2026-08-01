@@ -26,8 +26,10 @@ from embeddy.config import (
     load_pipeline_settings,
     load_server_settings,
     load_settings,
+    load_store_settings,
 )
 from embeddy.errors import ClientError
+from embeddy.index.factory import parse_store_url
 from embeddy.registry import get_model, resolve_dimension
 
 __all__ = ["app", "main"]
@@ -102,11 +104,12 @@ def serve(
     from embeddy.server import create_app
 
     settings = load_server_settings(env_file=env_file)
+    store_settings = load_store_settings(env_file=env_file)
+    dsn = store_settings.url or f"sqlite://{settings.store_path}"
     typer.echo(
-        f"serving embeddy API on http://{host}:{port} "
-        f"(store={settings.store_path}, max_top_k={settings.max_top_k})"
+        f"serving embeddy API on http://{host}:{port} (store={dsn}, max_top_k={settings.max_top_k})"
     )
-    uvicorn.run(create_app(settings=settings), host=host, port=port)
+    uvicorn.run(create_app(settings=settings, store_settings=store_settings), host=host, port=port)
 
 
 @app.command("info")
@@ -119,6 +122,7 @@ def info(
     embedder = load_settings(env_file=env_file)
     pipeline = load_pipeline_settings(env_file=env_file)
     server = load_server_settings(env_file=env_file)
+    store = load_store_settings(env_file=env_file)
     spec = get_model(embedder.model)
     resolved = resolve_dimension(spec, embedder.embedding_dimension)
     typer.echo(f"embedder.model: {embedder.model}")
@@ -128,6 +132,10 @@ def info(
     )
     typer.echo(f"embedder.prompt_role: {embedder.prompt_role}")
     typer.echo(f"pipeline.concurrency: {pipeline.concurrency}")
+    typer.echo(f"store.url: {store.url or 'sqlite://' + server.store_path}")
+    if store.url:
+        parsed = parse_store_url(store.url)
+        typer.echo(f"store.backend: {parsed.backend} (quantization={parsed.quantization})")
     typer.echo(f"server.base_url: {server.base_url}")
     typer.echo(f"server.store_path: {server.store_path}")
     typer.echo(

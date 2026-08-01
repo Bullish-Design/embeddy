@@ -1,7 +1,7 @@
 # Architecture — chonkai + embeddy
 
 The greenfield rewrite architecture (CONCEPT.md / IMPLEMENTATION_PLAN.md §1–
-§8). This is a **map of what exists** at M6, not a design wishlist.
+§12). This is a **map of what exists** at M7, not a design wishlist.
 
 ## 1. Layering — two distributions, one-way dependency
 
@@ -95,7 +95,41 @@ The **chonkai public API** (chunkers, `ValidatedChunker`, `ChunkBudget`,
   deliberately no v0.3.x migration; policy is re-ingest from source).
 - `create_collection` / `get_chunk` / `list_chunks` / `list_collections` /
   `count_fts` are **beyond-protocol extras** (the server's 501 is for stores
-  that do not implement them — the Qdrant adapter will).
+  that do not implement them).
+
+### 3.1 The scale path — Qdrant (`embeddy/index/qdrant.py`, Phase 8 / M7)
+
+`QdrantStore` implements the SAME frozen `Searchable` — dense + sparse
+named vectors, payload filters, collection-level quantization, and the full
+source-op set (sources are first-class on every backend). It is selected by
+one config line: `store.url` (`EMBEDDY_STORE_URL`) → `build_store`
+(`embeddy/index/factory.py`, mirrors `build_provider`) → the server
+lifespan opens it. `None` keeps the sqlite `store_path` default — the bare
+`app = create_app()` path is unchanged.
+
+- **Mapping**: chunk/source ids hash to stable uuid5 point ids (qdrant
+  rejects non-UUID string ids); originals live in the payload and are
+  restored on every read. Sources live in a per-collection `__sources`
+  companion collection (the sqlite `sources`-table analogue).
+- **Filters**: `SearchFilters` compile to payload `Filter`s; the
+  source_path_prefix uses per-point `path_prefixes` arrays (exact prefix —
+  1.18 has no string-prefix condition). Pre-filters, so restrictive filters
+  return full top_k (the M3 recall contract).
+- **FTS**: no BM25 engine — pure-Python BM25 scan over payloads, FTS5
+  negative-rank convention, `raw` a no-op (decision 0004).
+- **Reindex**: no transactions — upsert-first then stale-delete; old chunks
+  stay intact and queryable on failure (weaker than sqlite's one-txn swap;
+  decision 0004).
+- **Sparse**: plumbing ships (`add(..., sparse_vectors=)` +
+  `search_sparse`, metric `SPARSE_DOT`); a real learned-sparse encoder is
+  out of scope (decision 0004).
+- **The store factory**: `parse_store_url` (pure, unit-tested) + async
+  `build_store`; qdrant reachability is verified at open time so
+  `/health/ready` reports not-ready honestly.
+
+Decisions: `docs/decisions/0003` (LanceDB revisit — not adopted; Qdrant is
+ the scale path) and `0004` (sparse status, reindex atomicity, the FTS
+ path, quantization, the sync-client note).
 
 ## 4. Search — typed, metric-honest fusion
 
@@ -196,11 +230,14 @@ docstring is the canonical map).
 
 ## 11. Roadmap (NOT implemented — do not document as features)
 
-- **Phase 8**: Qdrant adapter (the `qdrant` extra already installs the
-  client), LanceDB decision revisit, integration adapters
-  (Haystack/LlamaIndex).
+- Out of scope (not planned — `docs/decisions/0004`): a real learned-sparse
+  encoder (bge-m3 + FlagEmbedding) behind the shipped sparse plumbing; a
+  lexical index for the Qdrant FTS path (pure-Python BM25 today); an async
+  qdrant client; integration adapters (Haystack/LlamaIndex — plan §10 lists
+  them as optional post-v1).
 - Server auth/SSRF/path-traversal: explicitly out of scope (trusted tailnet).
 - MCP server, agents orchestration, distributed storage: non-goals for v1.
 
-See also: `docs/decisions/0001` (default search backend) and `0002`
-(benchmark tooling).
+See also: `docs/decisions/0001` (default search backend), `0002` (benchmark
+ tooling), `0003` (LanceDB revisit at M7), `0004` (Qdrant adapter
+ decisions).

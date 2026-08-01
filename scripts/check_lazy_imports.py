@@ -47,6 +47,7 @@ EXTRA_ONLY_MODULES: dict[str, str] = {
     "httpx": "embeddy[client]",
     # embeddy[qdrant]
     "qdrant": "embeddy[qdrant]",
+    "qdrant_client": "embeddy[qdrant]",
     # spike-only (benchmarks, manually installed — never a library dep)
     "lancedb": "spike-only (benchmarks)",
     "pyarrow": "spike-only (benchmarks)",

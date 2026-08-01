@@ -61,6 +61,9 @@ class Metric(Enum):
 
     COSINE = "cosine"  # similarity in [0, 1]; 1 - cosine_distance
     BM25 = "bm25"  # FTS5 BM25 score (roughly <= 0)
+    # Qdrant sparse path (Phase 8 extension): dot-product similarity,
+    # unbounded, higher = better. Not expressible over the dense protocol.
+    SPARSE_DOT = "sparse_dot"
     RRF = "rrf"  # fusion rank score, 1/(k+rank), k=60
     WEIGHTED = "weighted"  # min-max normalized blend of cosine + bm25
     RERANK = "rerank"  # cross-encoder score from the rerank stage

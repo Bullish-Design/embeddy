@@ -22,6 +22,29 @@ from embeddy.protocol.types import (
 )
 
 
+class StoreError(RuntimeError):
+    """A store-level operation failed (unknown collection, dimension
+    mismatch, missing source, ...). Shared by EVERY Searchable backend
+    (sqlite and Qdrant raise the same class so the server's 404/400
+    mapping is backend-agnostic — moved to the protocol module at Phase 8
+    so the Qdrant adapter does not depend on the sqlite module)."""
+
+
+@dataclass(frozen=True, slots=True)
+class CollectionInfo:
+    """One collection row's metadata (the server's GET /api/v1/collections).
+
+    A store EXTRA record (like the create_collection/count_fts methods) —
+    NOT part of the frozen `Searchable` protocol; the server owns
+    collection lifecycle and reads this through the store's
+    `list_collections` extra. Defined on the protocol module (Phase 8) so
+    every backend's `list_collections` returns the same record.
+    """
+
+    collection_id: str
+    vector_dimension: int  # the RESOLVED dimension the collection stores
+
+
 @dataclass(frozen=True, slots=True)
 class SearchFilters:
     """Compiled-to-SQL pre-filters (never post-filter over-fetch — fixes M3).

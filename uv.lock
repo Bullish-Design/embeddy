@@ -36,6 +36,7 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=0.23,<1" },
     { name = "pytest-benchmark", specifier = ">=4.0,<5" },
     { name = "pytest-cov", specifier = ">=5.0,<7" },
+    { name = "qdrant-client", specifier = ">=1.9" },
     { name = "ruff", specifier = ">=0.6,<1" },
     { name = "ty", specifier = ">=0.0.56,<1" },
     { name = "typer", specifier = ">=0.12,<1" },

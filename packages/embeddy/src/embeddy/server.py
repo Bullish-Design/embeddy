@@ -4,14 +4,16 @@ The server is a THIN ADAPTER that owns lifecycle (CONCEPT §3.7):
 
   * `create_app(store=..., provider=..., reranker=..., settings=...)` is the
     dependency-injection seam — ASGI tests inject mocks; the lifespan opens
-    the store (SqliteStore.open), builds + loads the provider from settings,
-    and closes everything on shutdown.
+    the store (via `build_store` on `store_settings.url` — the Phase 8 one
+    config line; None = the sqlite `store_path` DSN), builds + loads the
+    provider from settings, and closes everything on shutdown.
   * The module-level `app = create_app()` is built from settings so
     `uvicorn embeddy.server:app` works BARE. The bare app opens
-    `settings.store_path` and builds a LOCAL provider from the embedder
-    settings; when the provider cannot load (e.g. `embeddy[local]` missing)
-    the process stays up and reports NOT-ready — that is the honest health
-    contract.
+    `settings.store_path` (sqlite — unchanged by Phase 8) and builds a LOCAL
+    provider from the embedder settings; when the provider cannot load (e.g.
+    `embeddy[local]` missing) the process stays up and reports NOT-ready —
+    that is the honest health contract. `store: qdrant://...` selects the
+    Qdrant backend the same way (an unreachable qdrant -> not-ready + reason).
   * Health: `GET /health/live` = process up (always 200 while the process
     serves); `GET /health/ready` = provider LOADED and store OPEN (503 +
     `ready: false` otherwise). A startup failure is recorded, not re-raised:
@@ -72,12 +74,14 @@ from embeddy.config import (
     EmbedderSettings,
     PipelineSettings,
     ServerSettings,
+    StoreSettings,
     load_pipeline_settings,
     load_server_settings,
+    load_store_settings,
 )
 from embeddy.errors import EmbeddyError
-from embeddy.index.base import Searchable, SearchFilters
-from embeddy.index.sqlite import CollectionInfo, SqliteStore, StoreError
+from embeddy.index.base import CollectionInfo, Searchable, SearchFilters, StoreError
+from embeddy.index.factory import build_store
 from embeddy.pipeline import IngestPipeline, IngestStats, SourceError
 from embeddy.protocol.embedding import EmbeddingProvider
 from embeddy.protocol.rerank import RerankerProvider
@@ -250,10 +254,12 @@ class _ServerState:
         settings: ServerSettings,
         embedder: EmbedderSettings,
         pipeline: PipelineSettings,
+        store_settings: StoreSettings,
     ) -> None:
         self.settings = settings
         self.embedder = embedder
         self.pipeline = pipeline
+        self.store_settings = store_settings
         self.store: Searchable | None = None
         self.provider: EmbeddingProvider | None = None
         self.reranker: RerankerProvider | None = None
@@ -312,27 +318,35 @@ def create_app(
     settings: ServerSettings | None = None,
     embedder: EmbedderSettings | None = None,
     pipeline: PipelineSettings | None = None,
+    store_settings: StoreSettings | None = None,
 ) -> FastAPI:
     """Build the API app. The DI seam: inject store/provider/reranker for
     tests (the lifespan then only records readiness and never closes the
     injected deps); leave them None for the settings-driven bare server.
 
-    `settings`/`embedder`/`pipeline` default to the loaded settings
-    (CLI > file > env > defaults — config.py).
+    `settings`/`embedder`/`pipeline`/`store_settings` default to the loaded
+    settings (CLI > file > env > defaults — config.py). `store_settings.url`
+    selects the Searchable backend the lifespan opens (Phase 8 — store
+    selection via one config line; None = the sqlite `store_path` default).
     """
     server_settings = settings if settings is not None else load_server_settings()
     embedder_settings = embedder if embedder is not None else EmbedderSettings()
     pipeline_settings = pipeline if pipeline is not None else load_pipeline_settings()
+    store_cfg = store_settings if store_settings is not None else load_store_settings()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         state: _ServerState = app.state.server
         state.ready = False
         state.ready_reason = None
-        opened_store: SqliteStore | None = None
+        opened_store: Searchable | None = None
         try:
             if state.store is None:
-                opened_store = await SqliteStore.open(server_settings.store_path)
+                # Store selection (Phase 8): `store.url` is the one config
+                # line (CONCEPT §5.4); None falls back to the sqlite
+                # `store_path` DSN, so the bare server is unchanged.
+                dsn = state.store_settings.url or f"sqlite://{state.settings.store_path}"
+                opened_store = await build_store(dsn)
                 state.store = opened_store
             provider = state.provider
             if provider is None:
@@ -344,13 +358,13 @@ def create_app(
             # honest readiness: keep serving, report why we are not ready.
             state.ready_reason = f"{type(exc).__name__}: {exc}"
             if opened_store is not None:
-                await opened_store.close()
+                await _aclose(opened_store)
                 state.store = None
         try:
             yield
         finally:
             if opened_store is not None:
-                await opened_store.close()
+                await _aclose(opened_store)
                 state.store = None
             await _aclose(state.provider)
             await _aclose(state.reranker)
@@ -361,7 +375,9 @@ def create_app(
         version="0.1.0",
         lifespan=lifespan,
     )
-    app.state.server = _ServerState(server_settings, embedder_settings, pipeline_settings)
+    app.state.server = _ServerState(
+        server_settings, embedder_settings, pipeline_settings, store_cfg
+    )
     app.state.server.store = store
     app.state.server.provider = provider
     app.state.server.reranker = reranker
@@ -796,9 +812,10 @@ def _reranker(state: _ServerState) -> RerankerProvider:
 
 
 def _store_extra(store: Searchable, name: str, description: str) -> Callable[..., object]:
-    """Resolve a SqliteStore extra (create_collection / get_chunk /
-    list_chunks / list_collections) off a Searchable backend. The extras are
-    sqlite-only in v1 (like count_fts); a backend without one gets 501."""
+    """Resolve a store extra (create_collection / get_chunk / list_chunks /
+    list_collections) off a Searchable backend. The extras are implemented by
+    BOTH backends in v2 (sqlite + qdrant, like count_fts which is sqlite-only);
+    a backend without one gets 501."""
     extra = getattr(store, name, None)
     if not callable(extra):
         raise HTTPException(status_code=501, detail=f"store backend does not support {description}")

@@ -1,4 +1,4 @@
-# embeddy config reference (M5)
+# embeddy config reference (M7)
 
 Config = implementation (CONCEPT §3.8): **no field exists unless a code path
 reads it.** Precedence is **CLI > file > env > defaults** — a dotenv file
@@ -10,8 +10,8 @@ ignored by pydantic-settings.
 
 Env vars are the section prefix + uppercased field name:
 `EMBEDDY_EMBEDDER_MODEL`, `EMBEDDY_PIPELINE_CONCURRENCY`,
-`EMBEDDY_SERVER_MAX_TOP_K`, ... Tuples parse from env as JSON
-(`EMBEDDY_SERVER_CORS_ORIGINS='["http://a"]'`).
+`EMBEDDY_SERVER_MAX_TOP_K`, `EMBEDDY_STORE_URL`, ... Tuples parse from env
+as JSON (`EMBEDDY_SERVER_CORS_ORIGINS='["http://a"]'`).
 
 ## `embedder` — model selection + MRL + role
 
@@ -42,10 +42,41 @@ SSRF / path-traversal are out of scope on the trusted tailnet).
 | `max_body_bytes` | `10485760` (10 MiB) | the body-limit middleware (413) |
 | `max_embed_inputs` | `1024` | `/v1/embeddings` (413) |
 | `max_top_k` | `100` | search/rerank/chunks routes (413) |
-| `store_path` | `"embeddy.db"` | the server lifespan (`SqliteStore.open`) |
+| `store_path` | `"embeddy.db"` | the server lifespan (the sqlite fallback when `store.url` is unset) |
 | `base_url` | `http://127.0.0.1:8000` | the CLI's default client target |
 
+## `store` — the Searchable backend (Phase 8, one config line)
+
+CONCEPT §5.4: *"Scale: Qdrant adapter. Dense + sparse vectors, payload
+filters, quantization. One config line (`store: qdrant://...`)."* The
+`store` section selects the backend behind the frozen `Searchable` protocol
+(`embeddy/index/factory.py` — `build_store` mirrors `build_provider`).
+
+| Field | Default | Read by |
+|-------|---------|---------|
+| `url` | `None` | the server lifespan (`build_store(dsn)`) and the CLI `serve`/`info` commands |
+
+`url` is a store DSN. `None` (default) = the server's `store_path` sqlite
+DSN — the bare `app = create_app()` behavior is unchanged. Supported forms
+(`parse_store_url`, unit-tested):
+
+- **sqlite**: `sqlite://<path>` | `sqlite://:memory:` | `sqlite:<path>` | a
+  bare path (`embeddy.db`) | `:memory:`
+- **qdrant**: `qdrant://:memory:` (offline, hermetic — the test mode) |
+  `qdrant://host` | `qdrant://host:port` | `qdrant+https://host:port`, plus
+  `?quantization=int8|binary|none` for collection-level quantization
+  (applied at `create_collection` time — `docs/decisions/0004`).
+
+Qdrant caveats (documented in `docs/decisions/0004` and `USER_GUIDE`): no
+BM25 — `search_fts` is a pure-Python BM25 scan over payloads; no
+transactions — reindex is upsert-first with the old chunks intact on
+failure; the sync client blocks the event loop on a remote call. See also
+the INTEGRATION guide's storage-backend section.
+
 ## Example `.env`
+
+A shared dotenv file with all sections (the store section selects the
+backend):
 
 ```dotenv
 EMBEDDY_EMBEDDER_MODEL=microsoft/harrier-oss-v1-0.6b
@@ -54,6 +85,7 @@ EMBEDDY_PIPELINE_CONCURRENCY=2
 EMBEDDY_SERVER_MAX_TOP_K=25
 EMBEDDY_SERVER_MAX_BODY_BYTES=5242880
 EMBEDDY_SERVER_CORS_ORIGINS=["http://localhost:5173"]
+EMBEDDY_STORE_URL=qdrant://localhost:6333?quantization=int8
 ```
 
 ## API surface summary (what the server exposes)

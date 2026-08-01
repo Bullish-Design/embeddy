@@ -10,7 +10,54 @@ this project adheres to [Semantic Versioning](https://semver.org/) with
 
 ## [Unreleased]
 
-Nothing yet.
+### Added — Phase 8 / M7 (the scale path, post-v1 gates)
+
+- **QdrantStore** (`embeddy/index/qdrant.py`) — a second `Searchable`
+  backend behind the FROZEN M4 protocol (no protocol or wire-shape change):
+  dense cosine ANN, payload filters (content_types / source_path_prefix /
+  chunk_types / metadata_match) as true pre-filters, collection-level
+  quantization (scalar int8 / binary, via the DSN or `create_collection`),
+  the full source-op set (upsert/get/list/reindex/delete), and the
+  beyond-protocol extras (create_collection / get_chunk / list_chunks /
+  list_collections). All API facts verified empirically against
+  qdrant-client 1.18.0 (probes; `docs/decisions/0004`).
+- **Store selection** — a `store` config section with the one config line
+  (`store.url` / `EMBEDDY_STORE_URL`: `qdrant://host[:port]`,
+  `qdrant://:memory:`, sqlite DSN, or bare path) and a `build_store`
+  factory mirroring `build_provider`. `None` = the sqlite `store_path`
+  default, so the bare `app = create_app()` is unchanged. The server
+  lifespan + CLI `serve`/`info` read it; the honest-health contract holds
+  when qdrant is unreachable (not-ready + reason).
+- **Sparse plumbing** (decision 0004, option b): collections carry the
+  `sparse` named vector; `add()`/`reindex_source()` accept optional
+  `sparse_vectors`; `search_sparse()` is a beyond-protocol extension scored
+  with the new additive `Metric.SPARSE_DOT`. Exercised by tests with
+  synthetic vectors; a real learned-sparse encoder (bge-m3) is out of
+  scope.
+- **Tests**: 72 new tests — DSN parsing + factory (100%), QdrantStore unit
+  + integration on the hermetic in-memory backend (100%; dense search
+  parity vs SqliteStore, source-op lifecycle, pre-filter recall, reindex
+  failure leaves old chunks queryable, quantization, sparse, FTS BM25),
+  qdrant-backed server contract tests (store selection via the lifespan,
+  unreachable-qdrant not-ready, full product surface). qdrant-client is a
+  dev dependency (the httpx/fastapi precedent) so the default suite runs
+  them; the lazy-import audit now covers the `qdrant_client` root.
+- **Docs**: `docs/decisions/0003` (LanceDB revisit at M7 — still not
+  adopted; Qdrant is the scale path) and `0004` (adapter decisions: sparse
+  status, reindex atomicity, the pure-Python BM25 FTS path, quantization,
+  sync-client note); `config.md` (`store` section), `USER_GUIDE` (store
+  selection + qdrant caveats), `INTEGRATION` (storage backends),
+  `ARCHITECTURE` (the second backend + factory + decisions).
+
+### Known limits (documented, not bugs)
+
+- Qdrant `search_fts` is a pure-Python BM25 scan over payloads (no BM25
+  engine; `raw` is a no-op) — see 0004.
+- Qdrant `reindex_source` has no transactional atomicity: upsert-first,
+  old chunks intact on failure, possible old+new overlap mid-failure (0004).
+- Out of scope (not planned): a real learned-sparse encoder (bge-m3), a
+  lexical index for the Qdrant FTS path, an async qdrant client, integration
+  adapters (Haystack/LlamaIndex).
 
 ## [0.1.0] — 2026-08-01 (M6 — initial release)
 

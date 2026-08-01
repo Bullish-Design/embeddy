@@ -94,7 +94,19 @@ def test_info_prints_effective_config() -> None:
     assert "embedder.model: Qwen/Qwen3-Embedding-0.6B" in result.stdout
     assert "embedder.embedding_dimension: 1024" in result.stdout
     assert "pipeline.concurrency: 4" in result.stdout
+    assert "store.url: sqlite://embeddy.db" in result.stdout
     assert "server.store_path: embeddy.db" in result.stdout
+
+
+def test_info_prints_store_url_when_configured(tmp_path: Path) -> None:
+    """`store.url` set (the Phase-8 one config line) -> info shows it and
+    the parsed backend (config = implementation — the field is read)."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("EMBEDDY_STORE_URL=qdrant://:memory:?quantization=int8\n")
+    result = runner.invoke(cli_app, ["info", "--env-file", str(env_file)])
+    assert result.exit_code == 0
+    assert "store.url: qdrant://:memory:?quantization=int8" in result.stdout
+    assert "store.backend: qdrant (quantization=int8)" in result.stdout
 
 
 def test_info_file_overrides_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

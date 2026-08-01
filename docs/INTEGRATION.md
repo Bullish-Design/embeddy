@@ -107,6 +107,44 @@ curl -s localhost:9000/v1/rerank \
   -d '{"query": "token expiry", "texts": ["tokens expire after 30 days", "rate limits"], "top_n": 2}'
 ```
 
+## Storage backends (Phase 8 — the scale path)
+
+The server is backend-agnostic: it speaks to a `Searchable` (the frozen
+protocol), and the backend is selected by one config line (`store.url`,
+`docs/config.md`). Both backends implement the SAME wire surface — storage
+is a server-side concern, NOT a wire change (all routes, the error map,
+CORS and size limits are identical).
+
+```dotenv
+# default (unset): sqlite-vec + FTS5 at server.store_path
+EMBEDDY_STORE_URL=qdrant://localhost:6333
+# offline/test mode (hermetic, no docker):
+EMBEDDY_STORE_URL=qdrant://:memory:
+# scalar quantization (applied at create_collection time):
+EMBEDDY_STORE_URL=qdrant://localhost:6333?quantization=int8
+```
+
+`embeddy serve` opens the store at startup via `build_store`
+(`embeddy/index/factory.py`); `/health/ready` reports not-ready + reason
+when a remote qdrant is unreachable. Programmatic construction: `create_app`
+accepts `store_settings=` (or an injected `store=` — the DI seam).
+
+### Qdrant caveats (documented in `docs/decisions/0004`)
+
+- **FTS**: qdrant has no BM25 engine — `search_fts` is a pure-Python BM25
+  scan over payloads (pre-filtered; scores follow the FTS5 negative-rank
+  convention; `raw` is a no-op). Dense search is native cosine ANN.
+- **Reindex**: no transactions — new chunks upsert first, stale ids delete
+  second; old chunks stay intact and queryable on failure.
+- **Sparse**: the store ships the sparse plumbing (`search_sparse`,
+  synthetic-vector tested); dense-only end-to-end today — a real
+  learned-sparse encoder (bge-m3) is out of scope.
+- No auth on qdrant (trusted tailnet); the qdrant client is synchronous
+  (a remote call blocks the server's event loop while in flight).
+- The 501 path (`create_collection`/`get_chunk`/`list_chunks`/
+  `list_collections`) is unaffected — the qdrant backend implements all
+  four; `count_fts` is sqlite-only and the server never calls it.
+
 ## Error contract
 
 All errors are structured: `{"error": {"type", "message", "detail"}}`.
