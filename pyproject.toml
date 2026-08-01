@@ -1,6 +1,6 @@
 # chonkai + embeddy workspace root (virtual workspace — no package of its own).
 # Layout: IMPLEMENTATION_PLAN §2. Per-package metadata lives in
-# packages/<pkg>/pyproject.toml; shared tool config (ruff/mypy/pytest) lives here.
+# packages/<pkg>/pyproject.toml; shared tool config (ruff/ty/pytest) lives here.
 
 [tool.uv.workspace]
 members = ["packages/chonkai", "packages/embeddy"]
@@ -10,12 +10,13 @@ dev = [
   "pytest>=8.2,<9",
   "pytest-asyncio>=0.23,<1",
   "pytest-cov>=5.0,<7",
-  "mypy>=1.11,<2",
+  "hypothesis>=6.100,<7",
   "ruff>=0.6,<1",
+  "ty>=0.0.56,<1",
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "packages/chonkai/tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 # Coverage gate: raised toward the plan §11 targets (≥90% core / ≥95% chunkers)
@@ -29,31 +30,29 @@ markers = [
   "gpu: optional GPU tests",
 ]
 
-[tool.mypy]
-python_version = "3.11"
-strict = true
-warn_unused_ignores = true
-warn_redundant_casts = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-disallow_untyped_calls = true
-no_implicit_optional = true
-mypy_path = "packages/chonkai/src:packages/embeddy/src"
-packages = ["chonkai", "embeddy"]
+[tool.ty.environment]
+python-version = "3.11"
 
-[[tool.mypy.overrides]]
-# C-extension / runtime-only deps without bundled stubs. Kept to the minimum;
-# anything with real stubs must NOT be listed here (warn_unused_ignores).
-module = ["sqlite_vec", "tiktoken"]
-ignore_missing_imports = true
+[tool.ty.src]
+# .scratch/ is the planning workspace (concept/plan/spikes) — intentionally not
+# checked. test fixtures hold intentionally-broken/foreign-language samples
+# (data, not code).
+exclude = [".scratch", "packages/chonkai/tests/fixtures"]
+
+[[tool.ty.overrides]]
+# Extra-only deps (chonkai[docling], chonkai[tokenizers]) — imported lazily in
+# these modules; not installed in the dev env, so the import cannot resolve.
+# Ty's defaults are strict-by-default (replaces the mypy strict config).
+include = ["**/docling.py", "**/tokens.py"]
+rules = { unresolved-import = "ignore" }
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
 src = ["packages/chonkai/src", "packages/embeddy/src", "tests"]
 # .scratch/ is the planning workspace (concept/plan/spikes) — intentionally not linted.
-exclude = [".scratch"]
+# test fixtures hold intentionally-broken/foreign-language samples (data, not code).
+exclude = [".scratch", "packages/chonkai/tests/fixtures"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

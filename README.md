@@ -10,7 +10,7 @@ Two libraries in one uv workspace (IMPLEMENTATION_PLAN §2).
 ## Layout
 
 ```
-pyproject.toml            workspace root: members + shared ruff/mypy/pytest config
+pyproject.toml            workspace root: members + shared ruff/ty/pytest config
 packages/chonkai/         document processing (src/chonkai)
 packages/embeddy/         retrieval workflow (src/embeddy)
 tests/                    shared integration/e2e tests
@@ -23,12 +23,12 @@ docs/                     (later phases)
 
 ```bash
 devenv shell          # or: uv sync
-uv run pytest         # keystone e2e suite (tagged [e2e])
-uv run mypy           # strict
+uv run pytest         # unit + keystone e2e suite (e2e tagged [e2e])
+uv run ty check       # strict type check
 uv run ruff check .   # lint
 ```
 
-## Status — M1 (Phase 1 keystone slice)
+## Status — M2 (Phase 1 keystone + Phase 2 chonkai v1)
 
 - `embeddy.protocol` — typed records (`EmbedInput`, `Vector`, `StoredChunk`,
   `ScoredDocument` w/ `.metric`, `CollectionStats`, `SourceMetadata`,
@@ -45,6 +45,21 @@ uv run ruff check .   # lint
 - `embeddy.search` — `fuse_rrf` (k=60) / `fuse_weighted` pure functions.
 - `chonkai` — `IngestResult` / `Chunk` / `SourceMetadata`, `ParagraphChunker`,
   `ValidatedChunker` (non-empty, token budget, line ranges).
+- `chonkai.ingest` — content-type detection, encoding-fallback file reading,
+  docling bridge (lazy extra), sha256 hashing.
+- `chonkai.chunkers` — paragraph (short-merge), markdown (code-fence-aware,
+  heading→`parent`), semchunk (token-accurate), tree-sitter (10 bundled code
+  grammars + markdown; decorator recovery via the raw parser; granularity
+  filter), docling bridge (lazy extra), `get_chunker` factory.
+- Tree-sitter language set: **release-required = python / bash / markdown**
+  (`RELEASE_REQUIRED_LANGUAGES`); the other 7 bundled grammars (js/ts/rust/go/
+  c/cpp/java/ruby) stay supported but are not release-gated. Markdown is a
+  two-grammar pair (`markdown` block + `markdown_inline` injection); the block
+  grammar is a manifest download on first use (offline-safe after caching,
+  cache dir via `tslp.configure(PackConfig(cache_dir=...))`), with a
+  pure-Python fallback chunker when it cannot load.
+- `chonkai.validated` — invariants on every chunker output + token post-split.
+- Type checking: Ty (strict by default) — replaces mypy.
 
 See `.scratch/projects/001-greenfield-rewrite/` for the concept, plan, and
 Phase-0 spike evidence.

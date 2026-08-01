@@ -11,8 +11,9 @@ import hashlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-# Vocabulary the chunkers may emit and ValidatedChunker accepts. Grows with
-# Phase 2 (heading/section/code...). "paragraph" is the Phase-1 baseline.
+# Vocabulary the chunkers may emit and ValidatedChunker accepts. Phase 2
+# adds the tree-sitter code kinds (struct/enum/trait/interface/impl) and the
+# markdown code-block kind.
 CHUNK_TYPES: frozenset[str] = frozenset(
     {
         "paragraph",
@@ -21,10 +22,25 @@ CHUNK_TYPES: frozenset[str] = frozenset(
         "function",
         "method",
         "class",
+        "struct",
+        "enum",
+        "trait",
+        "interface",
+        "impl",
         "module",
         "code",
     }
 )
+
+
+def compute_content_hash(data: bytes) -> str:
+    """sha256 hex digest of a source's raw bytes.
+
+    The single hash implementation shared by the ingestor and
+    `IngestResult.from_text` (plan §4: "Wire IngestResult.from_text to share
+    the hash logic").
+    """
+    return hashlib.sha256(data).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,10 +80,19 @@ class SourceMetadata:
 
 @dataclass(frozen=True, slots=True)
 class IngestResult:
-    """One ingested source: metadata + extracted text, ready to chunk."""
+    """One ingested source: metadata + extracted text, ready to chunk.
+
+    `warnings` collects non-fatal ingest issues (encoding fallback, docling
+    status) — the old M-utf8 finding is fixed by collecting, not raising.
+    `document` optionally carries the docling Document for docling-routed
+    sources so the DoclingChunker bridge can use its heading metadata; it is
+    typed `object` so chonkai core never imports docling.
+    """
 
     source: SourceMetadata
     text: str
+    warnings: tuple[str, ...] = ()
+    document: object | None = None
 
     @classmethod
     def from_text(
@@ -77,18 +102,22 @@ class IngestResult:
         path: str = "<memory>",
         content_type: str | None = None,
         mtime: datetime | None = None,
+        warnings: tuple[str, ...] = (),
+        document: object | None = None,
     ) -> IngestResult:
-        """Minimal ingest path used before the Phase-2 Ingestor lands."""
+        """Minimal ingest path for in-memory text (no file I/O)."""
         data = text.encode("utf-8")
         return cls(
             source=SourceMetadata(
                 path=path,
                 size_bytes=len(data),
                 mtime=mtime or datetime.now(UTC),
-                content_hash=hashlib.sha256(data).hexdigest(),
+                content_hash=compute_content_hash(data),
                 content_type=content_type,
             ),
             text=text,
+            warnings=tuple(warnings),
+            document=document,
         )
 
 
@@ -99,6 +128,10 @@ class Chunk:
     Line ranges are 1-based, inclusive (converted from any 0-based internal
     spans at the public boundary — PRECODE_REPORT). `token_count` is filled by
     ValidatedChunker (the invariant wrapper owns the token counter).
+    `granularity` is the tree-sitter granularity ("function" | "class" |
+    "module") when the chunk came from a code definition. `has_error_nodes`
+    flags chunks from code with broken syntax (tree-sitter still parses it;
+    there is no paragraph fallback).
     """
 
     content: str  # non-empty (ValidatedChunker invariant)
@@ -107,6 +140,8 @@ class Chunk:
     chunk_type: str = "paragraph"
     parent: str | None = None  # enclosing heading / definition name
     token_count: int = 0
+    granularity: str | None = None  # "function" | "class" | "module"
+    has_error_nodes: bool = False
 
     def __post_init__(self) -> None:
         if self.start_line < 1 or self.end_line < self.start_line:

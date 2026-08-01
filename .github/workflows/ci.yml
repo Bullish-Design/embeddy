@@ -36,7 +36,7 @@ jobs:
           fi
 
   type:
-    name: mypy strict
+    name: ty (strict type check)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -46,8 +46,8 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install workspace
         run: uv sync
-      - name: mypy
-        run: uv run mypy
+      - name: ty
+        run: uv run ty check
 
   test:
     name: Tests (coverage gate)
