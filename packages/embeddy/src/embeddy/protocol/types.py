@@ -119,7 +119,16 @@ and identical across backends.
 
 @dataclass(frozen=True, slots=True)
 class SourceMetadata:
-    """Immutable description of one indexed source (file/URL/text)."""
+    """Immutable description of one indexed source (file/URL/text).
+
+    `content_type` is the source document's content type ("markdown",
+    "python", "pdf", ...) — the value `SearchFilters.content_types`
+    pre-filters on. It is optional: callers that do not carry it (e.g. the
+    Phase-1 keystone tests) index without content-type filtering. Added at
+    M4 (protocol convergence) so content_types can compile to a real SQL
+    pre-filter; the column and the vec0 aux-column copy are both keyed off
+    this field.
+    """
 
     id: SourceId
     collection_id: str
@@ -127,12 +136,15 @@ class SourceMetadata:
     content_hash: str  # chonkai-computed hash (sha256 hex)
     size_bytes: int
     mtime: datetime | None = None
+    content_type: str | None = None
 
     def __post_init__(self) -> None:
         if self.size_bytes < 0:
             raise ValueError(f"size_bytes must be >= 0, got {self.size_bytes}")
         if not self.content_hash:
             raise ValueError("content_hash must be non-empty")
+        if self.content_type is not None and not self.content_type.strip():
+            raise ValueError("content_type must be a non-empty string or None")
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +203,39 @@ class ScoredDocument:
     def __post_init__(self) -> None:
         if not math.isfinite(self.score):
             raise ValueError(f"score must be finite, got {self.score}")
+
+
+@dataclass(frozen=True, slots=True)
+class SearchResult:
+    """One search outcome (the `search_hybrid` return record).
+
+    `total_results` is the number of unique candidate chunks the retrieval
+    stage produced BEFORE fusion truncation — i.e. the union of the vector
+    and FTS legs' candidate sets. It is a cheap in-memory count (both legs
+    are already fetched), never a materialization of the whole corpus. For
+    the vector leg the candidate count is scan-bounded by `retrieve_k` by
+    design (cosine has no natural "total matches" cutoff — CONCEPT §5.5
+    sanctions documenting it as returned results); the exact FTS pre-
+    truncation count is available via `SqliteStore.count_fts` (plan §14:
+    cheap COUNT(*)).
+
+    `metric` is the score semantics of `results`: RRF or WEIGHTED after
+    fusion, RERANK when the rerank stage ran. `mode` records the fusion
+    mode ("rrf" | "weighted"); the rerank stage does not change `mode`.
+    """
+
+    results: list[ScoredDocument]
+    total_results: int
+    metric: Metric
+    mode: str
+    query: str
+    collection: str
+
+    def __post_init__(self) -> None:
+        if self.total_results < 0:
+            raise ValueError(f"total_results must be >= 0, got {self.total_results}")
+        if not self.mode:
+            raise ValueError("mode must be non-empty")
 
 
 @dataclass(frozen=True, slots=True)

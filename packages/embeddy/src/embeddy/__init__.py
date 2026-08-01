@@ -48,7 +48,7 @@ from embeddy.registry import (
     resolve_instruction,
     truncate_and_renormalize,
 )
-from embeddy.search import RRF_DEFAULT_K, fuse_rrf, fuse_weighted
+from embeddy.search import RRF_DEFAULT_K, fuse_rrf, fuse_weighted, search_hybrid
 
 __version__ = "0.1.0"
 
@@ -77,6 +77,7 @@ __all__ = [
     "RerankHit",
     "RerankerProvider",
     "ScoredDocument",
+    "SearchResult",
     "SourceId",
     "SourceMetadata",
     "StoredChunk",
@@ -94,5 +95,6 @@ __all__ = [
     "normalize_l2",
     "resolve_dimension",
     "resolve_instruction",
+    "search_hybrid",
     "truncate_and_renormalize",
 ]

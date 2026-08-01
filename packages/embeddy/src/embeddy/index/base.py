@@ -48,7 +48,18 @@ class SearchFilters:
 
 @runtime_checkable
 class Searchable(Protocol):
-    """Storage contract. All methods async; backends own their connections."""
+    """Storage contract. All methods async; backends own their connections.
+
+    M4-converged signatures (frozen at M4, IMPLEMENTATION_PLAN §12):
+      * `min_score` on both search methods — a score threshold compared
+        against the metric's TRUE semantics (fixes C3): for cosine the
+        threshold applies to scores in [0, 1] (higher = better), for BM25 it
+        applies to the FTS5 rank (<= 0, higher/less-negative = better). A
+        `min_score` is NEVER comparable across metrics (CONCEPT §3.4).
+      * `raw` on `search_fts` — the plan §14 opt-in: raw=True passes the
+        query string to FTS5 verbatim (caller owns metacharacter safety);
+        the default sanitizer quote-wraps tokens and ANDs them.
+    """
 
     # --- chunks ----------------------------------------------------------
     async def add(
@@ -57,6 +68,7 @@ class Searchable(Protocol):
         chunks: list[StoredChunk],
         vectors: list[Vector],
     ) -> None: ...
+
     async def delete(self, collection: str, chunk_ids: list[str]) -> None: ...
 
     # --- search ----------------------------------------------------------
@@ -66,13 +78,19 @@ class Searchable(Protocol):
         query_vector: Vector,
         filters: SearchFilters,
         top_k: int,
+        *,
+        min_score: float | None = None,
     ) -> list[ScoredDocument]: ...
+
     async def search_fts(
         self,
         collection: str,
         query: str,
         filters: SearchFilters,
         top_k: int,
+        *,
+        min_score: float | None = None,
+        raw: bool = False,
     ) -> list[ScoredDocument]: ...
 
     # --- collections -----------------------------------------------------

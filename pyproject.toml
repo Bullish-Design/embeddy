@@ -70,10 +70,19 @@ include = [
 ]
 rules = { unresolved-import = "ignore" }
 
+[[tool.ty.overrides]]
+# benchmarks/ — the LanceDB spike. lancedb + pyarrow are SPIKE-ONLY deps
+# (installed manually in the dev venv, not in uv.lock); and the LanceModel
+# schema declares the vector column as a runtime call `Vector(dim)` in a class
+# body, which ty rejects as a type expression. Both are documented in
+# benchmarks/README.md.
+include = ["benchmarks/**"]
+rules = { unresolved-import = "ignore", invalid-type-form = "ignore" }
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-src = ["packages/chonkai/src", "packages/embeddy/src", "tests"]
+src = ["packages/chonkai/src", "packages/embeddy/src", "tests", "benchmarks"]
 # .scratch/ is the planning workspace (concept/plan/spikes) — intentionally not linted.
 # test fixtures hold intentionally-broken/foreign-language samples (data, not code).
 exclude = [".scratch", "packages/chonkai/tests/fixtures"]
